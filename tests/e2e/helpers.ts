@@ -42,7 +42,7 @@ export async function pixelAt(page: Page, x: number, y: number): Promise<number[
     ([px, py, id]) => {
       const c = document.querySelector(`[data-testid="${id}"]`) as HTMLCanvasElement
       const d = c.getContext('2d')!.getImageData(px as number, py as number, 1, 1).data
-      return [d[0], d[1], d[2]]
+      return [d[0]!, d[1]!, d[2]!]
     },
     [x, y, T.editorCanvas] as const,
   )
@@ -52,7 +52,7 @@ export async function centerPixel(page: Page): Promise<number[]> {
   return page.evaluate((id) => {
     const c = document.querySelector(`[data-testid="${id}"]`) as HTMLCanvasElement
     const d = c.getContext('2d')!.getImageData(c.width >> 1, c.height >> 1, 1, 1).data
-    return [d[0], d[1], d[2]]
+    return [d[0]!, d[1]!, d[2]!]
   }, T.editorCanvas)
 }
 
