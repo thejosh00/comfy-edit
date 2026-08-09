@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# env — .env.example stays tracked
+.env
+.env.local
+.env.*.local
+
+# misc
+.DS_Store
+*.log
+npm-debug.log*
