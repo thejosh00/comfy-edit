@@ -1,0 +1,42 @@
+/**
+ * The single source of truth for E2E selectors, imported by both components and specs.
+ * A renamed selector is therefore a compile error, not a silently-skipped test.
+ */
+export const T = {
+  appRoot: 'app-root',
+
+  // Workspace
+  imageDropZone: 'image-drop-zone',
+  fileInput: 'file-input',
+  editorCanvas: 'editor-canvas',
+  canvasSize: 'canvas-size',
+  loadError: 'load-error',
+
+  // Toolbar
+  toolFreehand: 'tool-freehand',
+  toolLine: 'tool-line',
+  toolRect: 'tool-rect',
+  toolEllipse: 'tool-ellipse',
+  colorPicker: 'color-picker',
+  brushSize: 'brush-size',
+  btnUndo: 'btn-undo',
+  btnRedo: 'btn-redo',
+  btnClear: 'btn-clear',
+
+  // Transform panel
+  workflowSelect: 'workflow-select',
+  workflowError: 'workflow-error',
+  promptInput: 'prompt-input',
+  seedInput: 'seed-input',
+  seedLock: 'seed-lock',
+  btnRun: 'btn-run',
+  runStatus: 'run-status',
+  runProgress: 'run-progress',
+  runError: 'run-error',
+
+  // History
+  historyStrip: 'history-strip',
+  historyEntry: 'history-entry',
+} as const
+
+export type TestId = (typeof T)[keyof typeof T]

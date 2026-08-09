@@ -1,0 +1,31 @@
+{
+  "name": "comfy-edit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "npm run build && vite preview --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test --grep-invert @live",
+    "test:e2e:live": "COMFY_LIVE=1 playwright test --grep @live",
+    "test": "npm run typecheck && npm run test:unit && npm run test:e2e",
+    "fake-comfy": "node tests/fake-comfy/server.mjs --port 8199"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0",
+    "ws": "^8.18.0"
+  }
+}

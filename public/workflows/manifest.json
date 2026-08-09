@@ -1,0 +1,12 @@
+{
+  "workflows": [
+    {
+      "id": "passthrough",
+      "label": "Passthrough (test)",
+      "file": "passthrough.api.json",
+      "imageNode": "1",
+      "promptNode": "2",
+      "seedNode": "3"
+    }
+  ]
+}

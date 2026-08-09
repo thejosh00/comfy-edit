@@ -1,0 +1,38 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "PLACEHOLDER.png", "upload": "image" },
+    "_meta": { "title": "Load Image" }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "", "clip": ["4", 0] },
+    "_meta": { "title": "CLIP Text Encode (Prompt)" }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": ["4", 0],
+      "positive": ["2", 0],
+      "negative": ["2", 0],
+      "latent_image": ["1", 0]
+    },
+    "_meta": { "title": "KSampler" }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "placeholder.safetensors" },
+    "_meta": { "title": "Load Checkpoint" }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": { "filename_prefix": "comfy-edit", "images": ["3", 0] },
+    "_meta": { "title": "Save Image" }
+  }
+}
