@@ -47,8 +47,14 @@ test.describe('adding a workflow needs no code change', () => {
     await page.goto('/')
     await loadFixture(page)
 
+    // Assert the added workflow appeared alongside whatever was already
+    // configured — never the exact list, which would break the moment a real
+    // workflow is added to the manifest, which is the very thing being verified.
+    const before: string[] = JSON.parse(originalManifest).workflows.map(
+      (w: { label: string }) => w.label,
+    )
     const labels = await page.getByTestId(T.workflowSelect).locator('option').allTextContents()
-    expect(labels).toEqual(['Passthrough (test)', 'Second Workflow'])
+    expect(labels).toEqual([...before, 'Second Workflow'])
 
     await runTransformFlow(page, { workflow: 'second', prompt: 'via the added workflow' })
     expect(await centerPixel(page)).toEqual(MAGENTA)

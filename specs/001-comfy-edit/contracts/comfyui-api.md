@@ -9,6 +9,22 @@ rely on it.
 All paths are prefixed with `/comfy` from the browser's point of view; the dev server strips the
 prefix and forwards to `COMFY_URL`. Everything below describes the request as ComfyUI receives it.
 
+## 0. The `Origin` header — required on every route
+
+ComfyUI 0.31+ answers **403 to any request carrying an `Origin` header that is not its own host** —
+every route, not just writes, and regardless of method. A request with no `Origin` at all (curl,
+server-to-server) is accepted.
+
+The proxy must therefore rewrite `Origin` to the target's origin, on both HTTP requests and the
+WebSocket upgrade. **`changeOrigin: true` is not sufficient** — it rewrites `Host` and leaves
+`Origin` exactly as the browser set it, which is the failing combination.
+
+Verified against ComfyUI 0.31.0: `POST /upload/image` with `Origin: http://127.0.0.1:5174` → 403;
+the identical request with `Origin: http://127.0.0.1:8188` → 200.
+
+The fake server enforces the same rule, so a proxy that forwards the browser's `Origin` fails the
+offline suite rather than only failing against a real instance.
+
 ---
 
 ## 1. `POST /upload/image` — send the composited canvas

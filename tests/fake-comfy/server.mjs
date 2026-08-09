@@ -48,6 +48,16 @@ let pending = null
 
 // --- helpers ---------------------------------------------------------------
 
+/**
+ * Mirrors ComfyUI's origin check: no Origin header is fine (curl, server-side),
+ * but an Origin that is not this server's own is rejected.
+ */
+function originAllowed(req) {
+  const origin = req.headers.origin
+  if (!origin) return true
+  return origin === `http://127.0.0.1:${PORT}` || origin === `http://localhost:${PORT}`
+}
+
 function json(res, code, body) {
   const payload = JSON.stringify(body)
   res.writeHead(code, { 'Content-Type': 'application/json' })
@@ -188,6 +198,14 @@ const server = createServer(async (req, res) => {
   // Logged so a proxy rewrite mismatch (/comfy/ws vs /ws) is diagnosable in one run.
   process.stderr.write(`[fake-comfy] ${req.method} ${path}\n`)
 
+  // ComfyUI 0.31+ answers 403 to any request carrying a foreign Origin — every
+  // route, not just writes. Enforced here so a proxy that forwards the browser's
+  // Origin fails the offline suite instead of only failing against a real
+  // instance. The /__test/* control plane is exempt: Playwright calls it directly.
+  if (!path.startsWith('/__test/') && !originAllowed(req)) {
+    return json(res, 403, { error: `origin not allowed: ${req.headers.origin}` })
+  }
+
   if (path === '/system_stats') return json(res, 200, { system: { comfyui_version: 'fake' } })
 
   // --- test control ---
@@ -322,9 +340,9 @@ const wss = new WebSocketServer({ noServer: true })
 
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url, `http://127.0.0.1:${PORT}`)
-  process.stderr.write(`[fake-comfy] UPGRADE ${pathname}\n`)
+  process.stderr.write(`[fake-comfy] UPGRADE ${pathname} origin=${req.headers.origin ?? '-'}\n`)
   // If this ever logs /comfy/ws, the Vite proxy rewrite is not applying to upgrades.
-  if (pathname !== '/ws') {
+  if (pathname !== '/ws' || !originAllowed(req)) {
     socket.destroy()
     return
   }

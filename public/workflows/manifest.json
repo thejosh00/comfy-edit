@@ -7,6 +7,14 @@
       "imageNode": "1",
       "promptNode": "2",
       "seedNode": "3"
+    },
+    {
+      "id": "qwen-2511",
+      "label": "Qwen 2511 Edit",
+      "file": "qwen-2511.api.json",
+      "imageNode": "1",
+      "promptNode": "40",
+      "seedNode": "50"      
     }
   ]
 }

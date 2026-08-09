@@ -10,7 +10,11 @@ export const NOT_AN_IMAGE = fileURLToPath(new URL('../fixtures/not-an-image.txt'
 export const TEAL: [number, number, number] = [0, 128, 128]
 export const MAGENTA: [number, number, number] = [255, 0, 255]
 
+/** In @live runs the fake is not started at all, so its control plane is absent. */
+export const LIVE = !!process.env.COMFY_LIVE
+
 export async function resetFake(request: APIRequestContext): Promise<void> {
+  if (LIVE) return
   await request.post(`${FAKE}/__test/reset`)
 }
 
@@ -18,6 +22,7 @@ export async function configureFake(
   request: APIRequestContext,
   cfg: Record<string, unknown>,
 ): Promise<void> {
+  if (LIVE) return
   await request.post(`${FAKE}/__test/config`, { data: cfg })
 }
 

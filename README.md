@@ -153,6 +153,7 @@ ComfyUI protocol and the workflow manifest format.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `Upload failed (403)`, or 403 on every ComfyUI route | ComfyUI 0.31+ rejects requests whose `Origin` header isn't its own host | The proxy rewrites `Origin` to the target (`configure` hook in `vite.config.ts`). If you change the proxy config, keep that — `changeOrigin: true` only rewrites `Host`. |
 | Run stalls at "queued" forever | WebSocket upgrade reaching ComfyUI as `/comfy/ws` | The run should still finish via history polling. Check the proxy's `ws: true` and rewrite. |
 | `value not in list: …safetensors` | The model isn't on the GPU box | Download it there; this app never installs models |
 | Startup banner about a workflow | Manifest node ids don't match the graph | Fix them; the banner lists the ids that exist |
