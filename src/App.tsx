@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { CanvasStage } from './ui/CanvasStage'
 import { Toolbar } from './ui/Toolbar'
 import { TransformPanel } from './ui/TransformPanel'
+import { HistoryStrip } from './ui/HistoryStrip'
 import { useEditor } from './ui/useEditor'
 import { T } from './testids'
 
@@ -97,6 +98,8 @@ export function App() {
         onSeedLock={editor.setSeedLock}
         onRun={onRun}
       />
+
+      <HistoryStrip history={state.history} onSelect={editor.selectHistoryEntry} />
 
       {state.loadError && (
         <div className="banner error" data-testid={T.loadError}>

@@ -133,16 +133,16 @@ the first, and confirm the original image is back and all three entries remain.
 
 ### Tests for User Story 3 (MANDATORY — write first, MUST fail) ⚠️
 
-- [ ] T044 [P] [US3] Write `tests/unit/history.test.ts`: `addEntry` appends **and** selects (FR-034, FR-036); `selectEntry` with an unknown id **throws**; `currentEntry` returns null on empty; `nextGenerationLabel` numbers per workflow; entries are never removed by selection (FR-038); ids and timestamps are caller-supplied so assertions are plain equality.
-- [ ] T045 [US3] Write `tests/e2e/us3-history.spec.ts` covering spec Acceptance Scenarios 1–6: one entry after loading, marked current; three entries in order after two runs with the newest current; each generated entry exposing its workflow, instruction, and seed (FR-035); selecting the first restores that image at its own dimensions with all three entries still listed; branching from an earlier entry appends without removing anything; and selecting an entry with uncommitted marks discards them and disables undo (FR-039).
-- [ ] T046 [US3] Run the suite and **confirm T044–T045 fail** before implementing.
+- [X] T044 [P] [US3] Write `tests/unit/history.test.ts`: `addEntry` appends **and** selects (FR-034, FR-036); `selectEntry` with an unknown id **throws**; `currentEntry` returns null on empty; `nextGenerationLabel` numbers per workflow; entries are never removed by selection (FR-038); ids and timestamps are caller-supplied so assertions are plain equality.
+- [X] T045 [US3] Write `tests/e2e/us3-history.spec.ts` covering spec Acceptance Scenarios 1–6: one entry after loading, marked current; three entries in order after two runs with the newest current; each generated entry exposing its workflow, instruction, and seed (FR-035); selecting the first restores that image at its own dimensions with all three entries still listed; branching from an earlier entry appends without removing anything; and selecting an entry with uncommitted marks discards them and disables undo (FR-039).
+- [X] T046 [US3] Run the suite and **confirm T044–T045 fail** before implementing.
 
 ### Implementation for User Story 3
 
-- [ ] T047 [P] [US3] Implement `src/core/history.ts` to make T044 pass — `emptyHistory`, `addEntry`, `selectEntry`, `currentEntry`, `nextGenerationLabel`. Ids, timestamps, and object URLs are all passed in, never generated inside `core/`.
-- [ ] T048 [P] [US3] Implement `src/ui/HistoryStrip.tsx`: entries oldest-first, each with `data-entry-id` and `data-selected`, exposing workflow, instruction, and seed as accessible text.
-- [ ] T049 [US3] Wire history into `src/ui/useEditor.ts`: add an entry when an image is loaded (`origin: upload`) and after each successful run (`origin: generation` with workflow, prompt, seed, and promptId); on selection, restore the image, resize the canvas to that entry's dimensions, and `rebase` the document (FR-037, FR-039).
-- [ ] T050 [US3] Run the full suite and confirm all three stories are green.
+- [X] T047 [P] [US3] Implement `src/core/history.ts` to make T044 pass — `emptyHistory`, `addEntry`, `selectEntry`, `currentEntry`, `nextGenerationLabel`. Ids, timestamps, and object URLs are all passed in, never generated inside `core/`.
+- [X] T048 [P] [US3] Implement `src/ui/HistoryStrip.tsx`: entries oldest-first, each with `data-entry-id` and `data-selected`, exposing workflow, instruction, and seed as accessible text.
+- [X] T049 [US3] Wire history into `src/ui/useEditor.ts`: add an entry when an image is loaded (`origin: upload`) and after each successful run (`origin: generation` with workflow, prompt, seed, and promptId); on selection, restore the image, resize the canvas to that entry's dimensions, and `rebase` the document (FR-037, FR-039).
+- [X] T050 [US3] Run the full suite and confirm all three stories are green.
 
 **Checkpoint**: All user stories are independently functional; every story's unit tests AND E2E test pass; the full suite is green.
 

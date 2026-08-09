@@ -6,7 +6,12 @@ const APP_PORT = 5174
 
 export default defineConfig({
   testDir: 'tests/e2e',
+  // One worker, deliberately. There is a single fake ComfyUI holding uploads, the
+  // queue and history, and each spec resets it in beforeEach — parallel workers
+  // would wipe each other's state mid-test. The whole suite runs in ~30s, so a
+  // second worker buys nothing worth a shared-state race.
   fullyParallel: false,
+  workers: 1,
   forbidOnly: !!process.env.CI,
   reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],
   use: {
