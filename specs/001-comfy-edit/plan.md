@@ -166,3 +166,14 @@ sufficient for them.
 |-----------|------------|-------------------------------------|
 | `ws` devDependency | The fake ComfyUI must serve a WebSocket endpoint; Node 22 ships a WebSocket *client* but no server. | Hand-rolling the RFC 6455 handshake and frame writer is ~40 lines and genuinely doable, but it is exactly the kind of cleverness that produces intermittent failures. The constitution's Testing & Quality Gates say flaky tests must be fixed or deleted immediately, which weights reliability above dependency count here. |
 | Two test runners (Vitest + Playwright) | Pure logic needs fast, DOM-free unit tests (Principle I); canvas pixels and a real WebSocket need a real browser (Principle II). Neither runner covers both well. | A single Playwright-only suite would make every unit test a browser test — slow, and it would push `core/` logic behind UI automation, undermining test-first. A single Vitest-only suite cannot honour Principle II at all. Note this *removes* a layer rather than adding one: jsdom and React Testing Library are both excluded. |
+| `@types/node` devDependency (added during implementation — the plan said nine packages, this is the tenth) | `vite.config.ts`, `playwright.config.ts`, the E2E helpers and the fake server all run in Node and use `process`, `node:url`, and `node:fs`. Without it `npm run typecheck` fails, so the single-command gate in Principle III cannot pass. | Declaring `process` and friends by hand, or dropping the config files out of `tsconfig`'s `include`, would both trade a type-only dependency for silently untypechecked build configuration. Type-only, zero runtime weight. |
+
+### Other deviations recorded per Governance
+
+- **`workers: 1` in `playwright.config.ts`.** Not a dependency, but a deliberate constraint: one fake
+  ComfyUI holds all queue and history state and every spec resets it in `beforeEach`, so parallel
+  workers wipe each other mid-test. This was found as a real cross-file flake, not assumed. The
+  alternative — a fake per worker — is more machinery than a 38-second suite justifies.
+- **`runSeq` / `data-run-seq` on the run status element.** Added because a test needed to distinguish
+  *this* run's completion from the previous one's, which are otherwise identical. It is honest
+  observable state ("which run is this"), not a test-only branch in the application.

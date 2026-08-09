@@ -29,7 +29,14 @@ npm test
 
 Playwright starts the fake ComfyUI server and the Vite dev server itself, waits for each to answer a
 readiness URL, and tears both down afterwards. There are no sleeps anywhere, no manual setup, and no
-GPU cost. Expected wall time: under 60 seconds (SC-009).
+GPU cost. Measured wall time: **38 seconds** (SC-009 budget is 60).
+
+Two harness details that matter if you change the config:
+
+- **`workers: 1` is deliberate.** One fake ComfyUI holds the uploads, queue and history, and every
+  spec resets it in `beforeEach`. Parallel workers wipe each other's state mid-test.
+- **The dev server is started with `--host 127.0.0.1`.** Vite otherwise binds `::1` only, and the
+  readiness probe never connects.
 
 Machine-readable results land in `test-results/results.json`.
 
