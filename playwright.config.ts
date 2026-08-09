@@ -36,6 +36,9 @@ export default defineConfig({
         COMFY_URL: LIVE
           ? (process.env.COMFY_URL ?? 'http://127.0.0.1:8188')
           : `http://127.0.0.1:${FAKE_PORT}`,
+        // Configuration, not test-only app surface: the same knob a user could set.
+        // Keeps the FR-026 timeout case fast without a 5-minute wait.
+        ...(LIVE ? {} : { VITE_RUN_TIMEOUT_MS: '8000' }),
       },
     },
   ],

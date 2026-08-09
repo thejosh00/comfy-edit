@@ -103,10 +103,17 @@ export type TransformOpts = {
  */
 export async function runTransformFlow(page: Page, opts: TransformOpts = {}): Promise<void> {
   const { workflow = 'passthrough', prompt = 'make it magenta', timeout = 15_000 } = opts
+  const status = page.getByTestId(T.runStatus)
+
+  // Waiting on data-phase alone is not enough: after a previous run it already
+  // reads "done", so the wait would return before this run had even queued.
+  // data-run-seq increments when a run starts, which distinguishes the two.
+  const before = Number((await status.getAttribute('data-run-seq')) ?? '0')
 
   await page.getByTestId(T.workflowSelect).selectOption(workflow)
   await page.getByTestId(T.promptInput).fill(prompt)
   await page.getByTestId(T.btnRun).click()
 
-  await expect(page.getByTestId(T.runStatus)).toHaveAttribute('data-phase', 'done', { timeout })
+  await expect(status).toHaveAttribute('data-run-seq', String(before + 1), { timeout })
+  await expect(status).toHaveAttribute('data-phase', 'done', { timeout })
 }

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { CanvasStage } from './ui/CanvasStage'
 import { Toolbar } from './ui/Toolbar'
+import { TransformPanel } from './ui/TransformPanel'
 import { useEditor } from './ui/useEditor'
 import { T } from './testids'
 
@@ -22,6 +23,19 @@ export function App() {
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
   }, [editor])
+
+  /** The canvas already holds base + marks composited exactly as the user sees them. */
+  const getCanvasBlob = useCallback(async (): Promise<Blob> => {
+    const canvas = canvasRef.current
+    if (!canvas) throw new Error('There is no image to transform.')
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!blob) throw new Error('Could not read the canvas image.')
+    return blob
+  }, [])
+
+  const onRun = useCallback(() => {
+    void editor.runTransform(getCanvasBlob)
+  }, [editor, getCanvasBlob])
 
   const sizeLabel = state.base ? `${state.base.width}x${state.base.height}` : ''
 
@@ -67,13 +81,28 @@ export function App() {
         canvasRef={canvasRef}
       />
 
-      <div className="transform">
-        {state.loadError && (
-          <div className="banner error" data-testid={T.loadError}>
-            {state.loadError}
-          </div>
-        )}
-      </div>
+      <TransformPanel
+        workflows={state.workflows}
+        workflowError={state.workflowError}
+        selectedId={state.selectedWorkflowId}
+        prompt={state.prompt}
+        seed={state.seed}
+        seedLocked={state.seedLocked}
+        run={state.run}
+        runSeq={state.runSeq}
+        canRun={editor.canRun}
+        onSelect={editor.selectWorkflow}
+        onPrompt={editor.setPrompt}
+        onSeed={editor.setSeed}
+        onSeedLock={editor.setSeedLock}
+        onRun={onRun}
+      />
+
+      {state.loadError && (
+        <div className="banner error" data-testid={T.loadError}>
+          {state.loadError}
+        </div>
+      )}
     </div>
   )
 }

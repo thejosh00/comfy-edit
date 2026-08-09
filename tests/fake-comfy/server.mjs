@@ -160,7 +160,12 @@ function advance() {
     })
     history.set(promptId, {
       outputs: {},
-      status: { status_str: 'error', completed: false, messages: [] },
+      status: {
+        status_str: 'error',
+        completed: false,
+        // ComfyUI records the failure in history too, as [name, payload] pairs.
+        messages: [['execution_error', { exception_message: config.failWith }]],
+      },
     })
     pending = null
     return
