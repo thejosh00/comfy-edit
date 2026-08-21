@@ -22,6 +22,8 @@ type Props = {
   onRedo: () => void
   onClear: () => void
   onPickFile: () => void
+  /** Absent unless the dev server was pointed at a folder with IMAGES_DIR. */
+  onPickFolder: (() => void) | null
   sizeLabel: string
 }
 
@@ -29,6 +31,12 @@ export function Toolbar(props: Props) {
   return (
     <div className="toolbar">
       <button onClick={props.onPickFile}>Open image…</button>
+
+      {props.onPickFolder && (
+        <button data-testid={T.btnOpenFolder} onClick={props.onPickFolder}>
+          Open from folder…
+        </button>
+      )}
 
       <span className="status">|</span>
 

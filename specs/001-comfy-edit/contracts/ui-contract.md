@@ -56,10 +56,15 @@ element, so a spec has one element to find, one `toBlob`, and one `getImageData`
 | `workflow-select` | dropdown | one option per configured workflow, in manifest order, `value` = workflow id |
 | `workflow-error` | banner | present when any workflow is misconfigured or none are configured; names the workflow and the problem (FR-032) |
 | `prompt-input` | textarea | the instruction (FR-018) |
+| `lora-slot` | container | one per node id in the workflow's `loraNodes`; none at all when it declares none |
+| `lora-select` | dropdown | `data-slot="0..2"`; a `None` option plus one per catalog LoRA allowed for this workflow, `value` = lora id |
+| `lora-strength` | range input | `data-slot`, **`data-value`** = the strength that will be sent; `disabled` while the slot is empty |
 | `seed-input` | number input | current seed |
 | `seed-lock` | checkbox | when checked, the seed is reused rather than randomised (FR-028) |
+| `run-count` | dropdown | how many times Run executes the workflow; defaults to `1` |
+| `run-mode` | dropdown | `variations` or `serial`; **absent entirely while `run-count` is 1** |
 | `btn-run` | button | `disabled` while a run is in progress (FR-022), while no image is loaded, and whenever `workflow-error` is present |
-| `run-status` | status text | `data-phase` ∈ `idle` `uploading` `queued` `running` `done` `error` |
+| `run-status` | status text | `data-phase` ∈ `idle` `uploading` `queued` `running` `done` `error`; **`data-batch-index`** (1-based) and **`data-batch-total`**, both `0` when no batch is in flight |
 | `run-progress` | progress element | **`data-value="0".."100"`** |
 | `run-error` | banner | the service's own reason, verbatim (FR-025) |
 
@@ -77,7 +82,7 @@ when the human-readable wording changes.
 | Test id | Element | Observable state |
 |---|---|---|
 | `history-strip` | container | ordered oldest-first (FR-034) |
-| `history-entry` | one per entry | `data-entry-id`, `data-selected="true"` on exactly one (FR-036) |
+| `history-entry` | one per entry | `data-entry-id`, `data-parent-id` (empty for the first), `data-selected="true"` on exactly one (FR-036) |
 
 Each entry exposes its origin — workflow, instruction, and seed — as accessible text so FR-035 is
 checkable without reaching into application internals.

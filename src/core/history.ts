@@ -1,6 +1,16 @@
+/** The LoRAs that were actually applied, for provenance. Empty when none were. */
+export type AppliedLora = { file: string; strength: number }
+
 export type EntryOrigin =
   | { kind: 'upload' }
-  | { kind: 'generation'; workflowId: string; prompt: string; seed: number; promptId: string }
+  | {
+      kind: 'generation'
+      workflowId: string
+      prompt: string
+      seed: number
+      promptId: string
+      loras: AppliedLora[]
+    }
 
 export type HistoryEntry = {
   id: string

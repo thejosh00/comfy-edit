@@ -5,6 +5,7 @@ import {
   selectEntry,
   currentEntry,
   nextGenerationLabel,
+  type EntryOrigin,
   type HistoryEntry,
   type HistoryState,
 } from '../../src/core/history'
@@ -31,7 +32,14 @@ const generation = (
   height: 256,
   createdAt: 2000,
   parentId,
-  origin: { kind: 'generation', workflowId, prompt: 'make it magenta', seed: 42, promptId: 'p1' },
+  origin: {
+    kind: 'generation',
+    workflowId,
+    prompt: 'make it magenta',
+    seed: 42,
+    promptId: 'p1',
+    loras: [],
+  },
   ...over,
 })
 
@@ -67,8 +75,23 @@ describe('addEntry', () => {
       prompt: 'make it magenta',
       seed: 42,
       promptId: 'p1',
+      loras: [],
     })
     expect(entry.parentId).toBe('a')
+  })
+
+  it('records the LoRAs that were applied, for provenance', () => {
+    const loras = [{ file: 'darkbrush.safetensors', strength: 0.8 }]
+    const origin: EntryOrigin = {
+      kind: 'generation',
+      workflowId: 'krea2-refine',
+      prompt: 'make it magenta',
+      seed: 42,
+      promptId: 'p1',
+      loras,
+    }
+    const h = addEntry(seeded(), 'b', generation('krea2-refine', 'a', { origin }))
+    expect(h.entries[1]!.origin).toEqual(origin)
   })
 
   it('uses the id and timestamp it is given, generating neither itself', () => {

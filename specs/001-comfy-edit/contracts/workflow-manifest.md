@@ -44,8 +44,67 @@ Location: `public/workflows/`. Served statically, so files can be added or edite
 | `imageInput` | no | overrides the default input name `image` |
 | `promptInput` | no | overrides the default; tried in order: `prompt`, `text` |
 | `seedInput` | no | overrides the default; tried in order: `seed`, `noise_seed` |
+| `loraNodes` | no | node ids of the user-selectable LoRA slots, in slot order; 1 to 3 |
+| `loraNameInput` | no | overrides the default input name `lora_name` |
+| `loraStrengthInput` | no | overrides the default; tried in order: `strength_model`, `strength` |
 
 The dropdown lists workflows in manifest order.
+
+---
+
+## `loras.json` — the optional LoRA catalog
+
+Same directory. **Optional**: a missing file simply means no LoRAs are offered, and the editor is
+fully usable without one. A file that exists but is malformed is a hard error — silently ignoring it
+would present as the dropdown mysteriously being empty.
+
+```json
+{
+  "loras": [
+    { "id": "krea2-darkbrush", "label": "Dark Brush", "file": "krea2_darkbrush.safetensors",
+      "workflows": ["krea2-refine"], "strength": 0.8 },
+    { "id": "qwen-female", "label": "Female", "file": "female.safetensors",
+      "workflows": ["qwen-2511"] }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | stable key, unique across the catalog |
+| `label` | yes | what the slot dropdown shows |
+| `file` | yes | the `.safetensors` name as ComfyUI knows it; written to `lora_name` verbatim |
+| `workflows` | no | workflow ids this LoRA is offered for; **omitted means every workflow** |
+| `strength` | no | the slider's initial value when selected; defaults to `1` |
+
+`workflows` exists because a LoRA trained against one base model does nothing useful on another —
+`krea2_darkbrush` on Qwen is a wasted GPU-minute and a confusing result, not an error the user can
+read. Scoping hides it rather than offering it and letting the run fail.
+
+---
+
+## LoRA slots: declared, never discovered
+
+A workflow's LoRA slots are the node ids listed in `loraNodes`. They are **not** found by scanning the
+graph for `LoraLoader*` nodes, because a graph may legitimately carry a LoRA that must stay on and out
+of the user's hands — `qwen-2511`'s `Lightning 4-step LoRA (always on)` at node `32` is exactly that.
+Auto-discovery would hand the user a control that breaks the workflow.
+
+The slots are expected to be chained in series through their `model` inputs, each disabled at
+`strength_model: 0`, which is how both shipped graphs already export.
+
+**Off is `strength_model: 0`, never node removal.** Every declared slot is written on every run: a
+selected slot gets its `lora_name` and strength, an empty one gets `strength_model: 0` **with its
+authored `lora_name` left alone**. Two reasons:
+
+- Removing a node would mean rewiring the `model` chain around it — the one thing patching promises
+  never to do.
+- ComfyUI validates `lora_name` against the files on disk *even at strength 0*, so overwriting the
+  authored name with a placeholder would fail the whole prompt with `value not in list`.
+
+Selections do not survive changing workflow, since the catalog is filtered per workflow and a
+carried-over choice could name a file the next workflow cannot load. Re-selecting the *same* workflow
+keeps them.
 
 ---
 
@@ -111,6 +170,12 @@ the pure validator.
 | Node lacks the target input | the input names it does have |
 | Target input is a link | which node to point at instead |
 | No workflows configured at all | that there are none; drawing stays fully usable |
+| `loraNodes` is not 1–3 node id strings | the workflow id and the field name |
+| A declared LoRA node is absent | the id, the field name `loraNodes`, and the available node ids |
+| A LoRA node lacks `lora_name` / `strength_model` | the inputs it does have, and which `lora*Input` to set |
+| `loras.json` is malformed | the lora id and the offending field |
+| A duplicate lora id | the id, and that ids must be unique |
+| `loras.json` is absent | *not an error* — no LoRAs are offered |
 
 ---
 

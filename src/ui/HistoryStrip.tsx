@@ -27,6 +27,9 @@ export function HistoryStrip({ history, onSelect }: Props) {
           className="history-entry"
           data-testid={T.historyEntry}
           data-entry-id={entry.id}
+          // What a batch's repeat mode actually changes: variations share one
+          // parent, a serial chain parents each result to the one before it.
+          data-parent-id={entry.parentId ?? ''}
           data-selected={entry.id === history.currentId}
           title={describe(entry)}
           onClick={() => onSelect(entry.id)}

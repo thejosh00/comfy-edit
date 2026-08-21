@@ -3,6 +3,7 @@ import { CanvasStage } from './ui/CanvasStage'
 import { Toolbar } from './ui/Toolbar'
 import { TransformPanel } from './ui/TransformPanel'
 import { HistoryStrip } from './ui/HistoryStrip'
+import { FolderPicker } from './ui/FolderPicker'
 import { useEditor } from './ui/useEditor'
 import { T } from './testids'
 
@@ -35,7 +36,7 @@ export function App() {
   }, [])
 
   const onRun = useCallback(() => {
-    void editor.runTransform(getCanvasBlob)
+    void editor.runBatch(getCanvasBlob)
   }, [editor, getCanvasBlob])
 
   const sizeLabel = state.base ? `${state.base.width}x${state.base.height}` : ''
@@ -69,6 +70,7 @@ export function App() {
         onRedo={editor.redo}
         onClear={editor.clear}
         onPickFile={() => fileRef.current?.click()}
+        onPickFolder={state.folder.enabled ? editor.openFolderPicker : null}
         sizeLabel={sizeLabel}
       />
 
@@ -89,6 +91,12 @@ export function App() {
         prompt={state.prompt}
         seed={state.seed}
         seedLocked={state.seedLocked}
+        loraSlots={editor.loraSlots}
+        availableLoras={editor.availableLoras}
+        loras={state.loras}
+        batchCount={state.batchCount}
+        batchMode={state.batchMode}
+        batch={state.batch}
         run={state.run}
         runSeq={state.runSeq}
         canRun={editor.canRun}
@@ -96,10 +104,21 @@ export function App() {
         onPrompt={editor.setPrompt}
         onSeed={editor.setSeed}
         onSeedLock={editor.setSeedLock}
+        onLora={editor.setLora}
+        onBatchCount={editor.setBatchCount}
+        onBatchMode={editor.setBatchMode}
         onRun={onRun}
       />
 
       <HistoryStrip history={state.history} onSelect={editor.selectHistoryEntry} />
+
+      {state.folder.open && (
+        <FolderPicker
+          folder={state.folder}
+          onPick={(path) => void editor.openLocalImage(path)}
+          onClose={editor.closeFolderPicker}
+        />
+      )}
 
       {state.loadError && (
         <div className="banner error" data-testid={T.loadError}>

@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import { fileURLToPath } from 'node:url'
 
 const LIVE = !!process.env.COMFY_LIVE
 const FAKE_PORT = 8199
@@ -44,6 +45,9 @@ export default defineConfig({
         // Configuration, not test-only app surface: the same knob a user could set.
         // Keeps the FR-026 timeout case fast without a 5-minute wait.
         ...(LIVE ? {} : { VITE_RUN_TIMEOUT_MS: '8000' }),
+        // The folder local-folder.spec.ts opens images from — likewise a real
+        // knob, pointed at a fixture directory rather than someone's Pictures.
+        IMAGES_DIR: fileURLToPath(new URL('tests/fixtures/gallery', import.meta.url)),
       },
     },
   ],

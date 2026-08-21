@@ -5,6 +5,14 @@ import {
   type ApiGraph,
   type WorkflowMeta,
 } from '../core/workflow'
+import { parseLoraManifest, type LoraMeta } from '../core/loras'
+import {
+  localFileUrl,
+  parseLocalFolder,
+  LOCAL_BASE,
+  LocalFolderError,
+  type LocalFolder,
+} from '../core/localImages'
 import type { OutputImageRef } from '../core/comfyEvents'
 
 /**
@@ -86,6 +94,27 @@ export async function fetchImageBlob(ref: OutputImageRef): Promise<Blob> {
   return res.blob()
 }
 
+/**
+ * List the images in the folder the dev server was pointed at. Served by our own
+ * middleware (src/server/localFolder.ts), not by ComfyUI — the folder is one
+ * ComfyUI need never have heard of, since a transform uploads the canvas anyway.
+ */
+export async function listLocalImages(): Promise<LocalFolder> {
+  const res = await fetch(`${LOCAL_BASE}/images`)
+  if (!res.ok) {
+    throw new LocalFolderError(`Could not list the image folder (${res.status}).`)
+  }
+  return parseLocalFolder(await res.json())
+}
+
+export async function fetchLocalImage(path: string): Promise<Blob> {
+  const res = await fetch(localFileUrl(path))
+  if (!res.ok) {
+    throw new LocalFolderError(`Could not read "${path}" from the image folder (${res.status}).`)
+  }
+  return res.blob()
+}
+
 export function comfyWsUrl(clientId: string): string {
   const origin = location.origin.replace(/^http/, 'ws')
   return `${origin}${COMFY_BASE}/ws?clientId=${encodeURIComponent(clientId)}`
@@ -93,10 +122,41 @@ export function comfyWsUrl(clientId: string): string {
 
 export type LoadedWorkflow = { meta: WorkflowMeta; graph: ApiGraph }
 
+export type LoadedConfig = { workflows: LoadedWorkflow[]; loras: LoraMeta[] }
+
 /**
- * Load and validate every configured workflow. Throws WorkflowConfigError on the
- * first problem, so misconfiguration surfaces at startup rather than after a run.
+ * Load the optional LoRA catalog. A missing file means "no LoRAs offered" — the
+ * app has to stay usable for anyone who never authors one. A file that exists but
+ * is malformed is still a hard error; silently ignoring it would present as the
+ * dropdown mysteriously being empty.
  */
+export async function loadLoras(): Promise<LoraMeta[]> {
+  const url = `${WORKFLOWS_BASE}/loras.json`
+
+  const res = await fetch(url)
+  if (!res.ok) return []
+
+  let json: unknown
+  try {
+    json = await res.json()
+  } catch (e) {
+    throw new WorkflowConfigError(
+      `${url} is not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
+    )
+  }
+  return parseLoraManifest(json)
+}
+
+/**
+ * Load and validate every configured workflow, plus the LoRA catalog. Throws
+ * WorkflowConfigError on the first problem, so misconfiguration surfaces at
+ * startup rather than after a run.
+ */
+export async function loadConfig(): Promise<LoadedConfig> {
+  const [workflows, loras] = await Promise.all([loadWorkflows(), loadLoras()])
+  return { workflows, loras }
+}
+
 export async function loadWorkflows(): Promise<LoadedWorkflow[]> {
   const manifestUrl = `${WORKFLOWS_BASE}/manifest.json`
 

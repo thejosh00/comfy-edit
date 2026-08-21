@@ -114,6 +114,7 @@ image without destroying the path they branched from (FR-038).
 |---|---|---|
 | `emptyHistory()` | no entries, `currentId: null` | — |
 | `addEntry(h, id, entry)` | appends **and** selects the new entry | FR-034, FR-036 |
+| `addEntry(emptyHistory(), …)` | how an upload lands: the new image becomes the only entry | FR-034a |
 | `selectEntry(h, id)` | changes `currentId`; **throws on an unknown id** | FR-037 |
 | `currentEntry(h)` | the selected entry, or `null` | FR-036 |
 | `nextGenerationLabel(h, workflowId)` | `"<workflowId> #<n>"`, counting that workflow's entries | FR-035 |
@@ -131,6 +132,8 @@ type WorkflowMeta = {
   imageNode:  string; imageInput?:  string
   promptNode: string; promptInput?: string
   seedNode:   string; seedInput?:   string
+  loraNodes?: string[]                        // 1..MAX_LORA_SLOTS, in slot order
+  loraNameInput?: string; loraStrengthInput?: string
 }
 
 type ApiNode  = { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string } }
@@ -162,8 +165,71 @@ image (FR-033). And an input driven by another node appears as an array — `"se
 which must be rejected, not overwritten, because writing a scalar over a link silently breaks the
 graph.
 
-`patchWorkflow(graph, meta, {imageFilename, prompt, seed})` `structuredClone`s the graph and returns
-a new one; the loaded graph is never mutated, so consecutive runs cannot accumulate state.
+`patchWorkflow(graph, meta, {imageFilename, prompt, seed, loras})` `structuredClone`s the graph and
+returns a new one; the loaded graph is never mutated, so consecutive runs cannot accumulate state.
+
+---
+
+## LoRA selection
+
+```ts
+type LoraMeta = {
+  id: string; label: string; file: string
+  workflows?: string[]        // omitted means every workflow
+  strength?: number           // the slider's initial value; defaults to DEFAULT_LORA_STRENGTH (1)
+}
+
+type LoraSelection = { file: string; strength: number } | null   // null = the slot is empty
+
+const MAX_LORA_SLOTS = 3
+```
+
+A workflow declares which node ids are user-controllable slots (`loraNodes`); the catalog declares
+which LoRAs may be offered for it (`lorasFor(catalog, workflowId)`). One `LoraSelection` per declared
+slot, in slot order, reaches `patchWorkflow`.
+
+**Every declared slot is written on every run.** A selected slot receives its `file` and `strength`;
+an empty one receives `strength_model: 0` with its authored `lora_name` untouched — ComfyUI validates
+that name against the files on disk even at strength 0, and turning a LoRA off by strength rather than
+by removing the node means the `model` chain is never rewired.
+
+Selections are cleared when the workflow changes, since a LoRA scoped to one base model would fail or
+silently misbehave on another.
+
+---
+
+## Batch runs
+
+```ts
+type BatchMode = 'variations' | 'serial'
+
+const BATCH_COUNTS = [1, 2, 3, 4, 6, 8]
+const MAX_BATCH_COUNT = 8
+
+clampBatchCount(count: number): number                      // 1..MAX_BATCH_COUNT, 1 for nonsense
+batchSeeds(count, seed, locked, rng?): number[]             // one seed per run
+```
+
+Run executes the workflow `count` times. The mode decides what each repeat consumes and where its
+result lands in the history:
+
+| Mode | Each run's input | Parent of each result |
+|---|---|---|
+| `variations` | the same composite, every time | the image the batch started from — the results are siblings |
+| `serial` | the previous run's result | the previous result — the results are a chain |
+
+A serial pass never re-composites the canvas. Adopting a result rebases the document, which clears the
+marks, so the composite would equal the result blob anyway — and reading it back would mean waiting on
+a canvas repaint mid-batch.
+
+**A locked seed walks upward** — `seed`, `seed+1`, … — rather than repeating. Locking promises
+reproducibility, and a walk is reproducible; reusing one seed would hit ComfyUI's content cache and
+return the identical image every time, which reads as a broken app rather than as a batch. A single
+locked run is therefore still exactly the seed the user chose.
+
+**A failure stops the batch where it is and keeps what already succeeded.** Those results are real
+images that cost real GPU time; discarding them because a later run failed would be the more
+surprising behaviour. Run stays disabled for the whole batch, not merely for the run in flight.
 
 ---
 

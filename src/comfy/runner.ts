@@ -8,6 +8,7 @@ import {
   type RunState,
 } from '../core/comfyEvents'
 import { patchWorkflow, type ApiGraph, type WorkflowMeta } from '../core/workflow'
+import type { LoraSelection } from '../core/loras'
 import {
   ComfyApiError,
   comfyWsUrl,
@@ -26,6 +27,8 @@ export type RunArgs = {
   graph: ApiGraph
   prompt: string
   seed: number
+  /** One entry per declared LoRA slot, in slot order. */
+  loras?: LoraSelection[]
   timeoutMs?: number
   signal?: AbortSignal
 }
@@ -82,6 +85,7 @@ export async function runWorkflow(
       imageFilename: uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name,
       prompt: args.prompt,
       seed: args.seed,
+      loras: args.loras,
     })
 
     push({ ...state, phase: 'queued' })

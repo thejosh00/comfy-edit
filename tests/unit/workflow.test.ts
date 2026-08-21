@@ -8,6 +8,7 @@ import {
   type ApiGraph,
   type WorkflowMeta,
 } from '../../src/core/workflow'
+import type { LoraSelection } from '../../src/core/loras'
 
 const META: WorkflowMeta = {
   id: 'passthrough',
@@ -24,6 +25,24 @@ const graph = (): ApiGraph => ({
   '3': { class_type: 'KSampler', inputs: { seed: 0, steps: 4, latent_image: ['1', 0] } },
   '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'x.safetensors' } },
 })
+
+/** META plus three chained LoRA slots, mirroring the real qwen-2511/krea2 graphs. */
+const LORA_META: WorkflowMeta = { ...META, loraNodes: ['5', '6', '7'] }
+
+const loraGraph = (): ApiGraph => {
+  const g = graph()
+  for (const [id, from] of [
+    ['5', '4'],
+    ['6', '5'],
+    ['7', '6'],
+  ] as const) {
+    g[id] = {
+      class_type: 'LoraLoaderModelOnly',
+      inputs: { lora_name: 'baked-in.safetensors', strength_model: 0, model: [from, 0] },
+    }
+  }
+  return g
+}
 
 describe('parseManifest', () => {
   it('reads a well-formed manifest in order', () => {
@@ -57,6 +76,32 @@ describe('parseManifest', () => {
       }
     },
   )
+
+  it('accepts an entry with no loraNodes — LoRA support is opt-in per workflow', () => {
+    const [meta] = parseManifest({ workflows: [{ ...META }] })
+    expect(meta!.loraNodes).toBeUndefined()
+  })
+
+  it('reads loraNodes in slot order', () => {
+    const [meta] = parseManifest({ workflows: [{ ...LORA_META }] })
+    expect(meta!.loraNodes).toEqual(['5', '6', '7'])
+  })
+
+  it.each([
+    ['not an array', 'nope'],
+    ['a non-string entry', ['5', 6]],
+    ['an empty-string entry', ['5', '']],
+    ['more than three slots', ['5', '6', '7', '8']],
+  ])('rejects loraNodes that is %s', (_label, loraNodes) => {
+    try {
+      parseManifest({ workflows: [{ ...META, loraNodes }] })
+      throw new Error('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(WorkflowConfigError)
+      expect((e as Error).message).toContain('loraNodes')
+      expect((e as Error).message).toContain('passthrough')
+    }
+  })
 })
 
 describe('validateWorkflow', () => {
@@ -120,6 +165,38 @@ describe('validateWorkflow', () => {
       expect(msg).toContain('Export (API)')
     }
   })
+
+  it('accepts a graph whose declared LoRA slots all exist', () => {
+    expect(() => validateWorkflow(LORA_META, loraGraph())).not.toThrow()
+  })
+
+  it('names a missing LoRA node and points at loraNodes', () => {
+    try {
+      validateWorkflow({ ...LORA_META, loraNodes: ['5', '99'] }, loraGraph())
+      throw new Error('should have thrown')
+    } catch (e) {
+      const msg = (e as Error).message
+      expect(e).toBeInstanceOf(WorkflowConfigError)
+      expect(msg).toContain('99')
+      expect(msg).toContain('loraNodes')
+      // Never the field name that does not exist in the manifest.
+      expect(msg).not.toContain('loraNameNode')
+    }
+  })
+
+  it('rejects a LoRA node that has no strength input, listing what it does have', () => {
+    const g = loraGraph()
+    g['5'] = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'x.safetensors' } }
+    try {
+      validateWorkflow(LORA_META, g)
+      throw new Error('should have thrown')
+    } catch (e) {
+      const msg = (e as Error).message
+      expect(msg).toContain('strength_model')
+      expect(msg).toContain('lora_name')
+      expect(msg).toContain('loraStrengthInput')
+    }
+  })
 })
 
 describe('patchWorkflow', () => {
@@ -181,6 +258,81 @@ describe('patchWorkflow', () => {
     const g = graph()
     g['3']!.inputs['seed'] = ['10', 0]
     expect(() => patchWorkflow(g, META, args)).toThrow(WorkflowConfigError)
+  })
+
+  describe('LoRA slots', () => {
+    const sel = (file: string, strength: number): LoraSelection => ({ file, strength })
+
+    it('writes the file and strength of a selected slot', () => {
+      const out = patchWorkflow(loraGraph(), LORA_META, {
+        ...args,
+        loras: [sel('darkbrush.safetensors', 0.8), null, null],
+      })
+      expect(out['5']!.inputs['lora_name']).toBe('darkbrush.safetensors')
+      expect(out['5']!.inputs['strength_model']).toBe(0.8)
+    })
+
+    it('disables an empty slot with strength 0 but leaves lora_name alone', () => {
+      // The baked-in name is known to exist on the server; ComfyUI rejects an
+      // unknown lora_name with "value not in list" even at strength 0.
+      const out = patchWorkflow(loraGraph(), LORA_META, { ...args, loras: [null, null, null] })
+      for (const id of ['5', '6', '7']) {
+        expect(out[id]!.inputs['strength_model']).toBe(0)
+        expect(out[id]!.inputs['lora_name']).toBe('baked-in.safetensors')
+      }
+    })
+
+    it('fills each declared slot by index, independently', () => {
+      const out = patchWorkflow(loraGraph(), LORA_META, {
+        ...args,
+        loras: [null, sel('b.safetensors', 1), sel('c.safetensors', 0.25)],
+      })
+      expect(out['5']!.inputs['strength_model']).toBe(0)
+      expect(out['6']!.inputs['lora_name']).toBe('b.safetensors')
+      expect(out['7']!.inputs['strength_model']).toBe(0.25)
+    })
+
+    it('disables every declared slot when no selections are passed at all', () => {
+      const out = patchWorkflow(loraGraph(), LORA_META, args)
+      expect(out['5']!.inputs['strength_model']).toBe(0)
+      expect(out['7']!.inputs['strength_model']).toBe(0)
+    })
+
+    it('ignores selections beyond the declared slots', () => {
+      const out = patchWorkflow(loraGraph(), { ...LORA_META, loraNodes: ['5'] }, {
+        ...args,
+        loras: [sel('a.safetensors', 1), sel('b.safetensors', 1), sel('c.safetensors', 1)],
+      })
+      expect(out['5']!.inputs['lora_name']).toBe('a.safetensors')
+      // Nodes the manifest never declared are left exactly as authored.
+      expect(out['6']!.inputs['lora_name']).toBe('baked-in.safetensors')
+      expect(out['6']!.inputs['strength_model']).toBe(0)
+    })
+
+    it('leaves the chain links untouched, so the graph still runs', () => {
+      const out = patchWorkflow(loraGraph(), LORA_META, {
+        ...args,
+        loras: [sel('a.safetensors', 1), null, null],
+      })
+      expect(out['5']!.inputs['model']).toEqual(['4', 0])
+      expect(out['6']!.inputs['model']).toEqual(['5', 0])
+      expect(out['7']!.inputs['model']).toEqual(['6', 0])
+    })
+
+    it('does not mutate the input graph', () => {
+      const original = loraGraph()
+      patchWorkflow(original, LORA_META, { ...args, loras: [sel('a.safetensors', 1), null, null] })
+      expect(original['5']!.inputs['lora_name']).toBe('baked-in.safetensors')
+      expect(original['5']!.inputs['strength_model']).toBe(0)
+    })
+
+    it('patches a workflow with no loraNodes exactly as it did before', () => {
+      const out = patchWorkflow(graph(), META, { ...args, loras: [sel('a.safetensors', 1)] })
+      expect(out['1']!.inputs['image']).toBe('upload-1.png')
+      expect(out['2']!.inputs['text']).toBe('make it magenta')
+      expect(out['3']!.inputs['seed']).toBe(4242)
+      expect(Object.keys(out)).toEqual(['1', '2', '3', '4'])
+    })
   })
 })
 

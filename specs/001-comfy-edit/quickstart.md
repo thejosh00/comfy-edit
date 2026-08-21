@@ -69,6 +69,27 @@ path worked.
 
 ---
 
+## Open images from a folder on this machine
+
+Point the dev server at a folder and the toolbar gains **Open from folder…**, which lists the images
+under it and loads the one you pick:
+
+```bash
+IMAGES_DIR=~/Pictures/renders npm run dev
+```
+
+The folder is ours, not ComfyUI's — it can be one ComfyUI has never heard of, because a transform
+uploads the composited canvas rather than referring to a path on the server. Details:
+
+- Served by `src/server/localFolder.ts`, a Vite middleware mounted at `/local/*` in both `dev` and
+  `preview`. Same-origin for the same reason `/comfy/*` is: a cross-origin image taints the canvas.
+- Recurses up to 6 levels, newest first, capped at 500 images — the picker says when it capped.
+- Skips dot-directories, non-images, and symlinks. `/local/file` refuses any path that resolves
+  outside the root, so the route is an image source and not a fileserver.
+- Unset `IMAGES_DIR` and the button is simply absent.
+
+---
+
 ## Develop against real ComfyUI
 
 The instance is remote, billable at roughly $2.29/hour, and not always running.

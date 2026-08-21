@@ -100,6 +100,9 @@ export type TransformOpts = {
   workflow?: string
   prompt?: string
   timeout?: number
+  /** Leave unset for a single run, which is the default the control starts on. */
+  count?: number
+  mode?: 'variations' | 'serial'
 }
 
 /**
@@ -107,7 +110,8 @@ export type TransformOpts = {
  * variant, so the two can never drift apart.
  */
 export async function runTransformFlow(page: Page, opts: TransformOpts = {}): Promise<void> {
-  const { workflow = 'passthrough', prompt = 'make it magenta', timeout = 15_000 } = opts
+  const { workflow = 'passthrough', prompt = 'make it magenta', timeout = 15_000, count, mode } = opts
+  const runs = count ?? 1
   const status = page.getByTestId(T.runStatus)
 
   // Waiting on data-phase alone is not enough: after a previous run it already
@@ -117,8 +121,15 @@ export async function runTransformFlow(page: Page, opts: TransformOpts = {}): Pr
 
   await page.getByTestId(T.workflowSelect).selectOption(workflow)
   await page.getByTestId(T.promptInput).fill(prompt)
+  if (count !== undefined) await page.getByTestId(T.runCount).selectOption(String(count))
+  if (mode) await page.getByTestId(T.runMode).selectOption(mode)
   await page.getByTestId(T.btnRun).click()
 
-  await expect(status).toHaveAttribute('data-run-seq', String(before + 1), { timeout })
+  // Every run in the batch bumps the sequence, so this waits for the last one to
+  // have started; data-batch-total returning to 0 is what says the batch is over.
+  await expect(status).toHaveAttribute('data-run-seq', String(before + runs), {
+    timeout: timeout * runs,
+  })
+  await expect(status).toHaveAttribute('data-batch-total', '0', { timeout })
   await expect(status).toHaveAttribute('data-phase', 'done', { timeout })
 }

@@ -22,13 +22,27 @@ export const T = {
   btnUndo: 'btn-undo',
   btnRedo: 'btn-redo',
   btnClear: 'btn-clear',
+  btnOpenFolder: 'btn-open-folder',
+
+  // Server-folder picker
+  folderPicker: 'folder-picker',
+  // One per image, distinguished by data-path — the historyEntry pattern.
+  folderPickerItem: 'folder-picker-item',
+  folderPickerStatus: 'folder-picker-status',
+  folderPickerClose: 'folder-picker-close',
 
   // Transform panel
   workflowSelect: 'workflow-select',
   workflowError: 'workflow-error',
   promptInput: 'prompt-input',
+  // One per declared slot, distinguished by data-slot — the historyEntry pattern.
+  loraSlot: 'lora-slot',
+  loraSelect: 'lora-select',
+  loraStrength: 'lora-strength',
   seedInput: 'seed-input',
   seedLock: 'seed-lock',
+  runCount: 'run-count',
+  runMode: 'run-mode',
   btnRun: 'btn-run',
   runStatus: 'run-status',
   runProgress: 'run-progress',

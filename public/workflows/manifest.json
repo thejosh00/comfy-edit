@@ -14,7 +14,17 @@
       "file": "qwen-2511.api.json",
       "imageNode": "1",
       "promptNode": "40",
-      "seedNode": "50"      
+      "seedNode": "50",
+      "loraNodes": ["20", "21", "22"]
+    },
+    {
+      "id": "krea2-refine",
+      "label": "Krea2 Refinement",
+      "file": "krea2-refine.api.json",
+      "imageNode": "1",
+      "promptNode": "20",
+      "seedNode": "40",
+      "loraNodes": ["30", "31", "32"]
     }
   ]
 }

@@ -16,11 +16,25 @@ import {
   emptyHistory,
   nextGenerationLabel,
   selectEntry,
+  type AppliedLora,
   type EntryOrigin,
   type HistoryState,
 } from '../core/history'
 import { randomSeed, WorkflowConfigError } from '../core/workflow'
-import { loadWorkflows, type LoadedWorkflow } from '../comfy/client'
+import { batchSeeds, clampBatchCount, type BatchMode } from '../core/batch'
+import {
+  emptySelections,
+  lorasFor,
+  type LoraMeta,
+  type LoraSelection,
+} from '../core/loras'
+import { LocalFolderError, type LocalFolder, type LocalImage } from '../core/localImages'
+import {
+  fetchLocalImage,
+  listLocalImages,
+  loadConfig,
+  type LoadedWorkflow,
+} from '../comfy/client'
 import { runWorkflow, DEFAULT_RUN_TIMEOUT_MS } from '../comfy/runner'
 import type { Shape, ToolId } from '../core/types'
 
@@ -37,15 +51,42 @@ export type EditorState = {
   workflows: LoadedWorkflow[]
   workflowError: string | null
   selectedWorkflowId: string
+  /** Every LoRA the catalog knows about; filtered per workflow for display. */
+  loraCatalog: LoraMeta[]
+  /** One entry per slot the selected workflow declares. */
+  loras: LoraSelection[]
   prompt: string
   seed: number
   seedLocked: boolean
+  /** How many times Run executes the workflow, and what the repeats mean. */
+  batchCount: number
+  batchMode: BatchMode
+  /** Non-null only while a batch is in flight; `index` is 1-based. */
+  batch: { index: number; total: number } | null
+
   run: RunState
   /** Increments when a run starts. Lets an observer distinguish this run's
    *  completion from the previous run's, which look identical otherwise. */
   runSeq: number
 
   history: HistoryState
+
+  folder: FolderState
+}
+
+/**
+ * The optional folder of images on the server. `enabled` is false when no
+ * IMAGES_DIR was configured, and the whole feature is then absent from the UI
+ * rather than present and broken.
+ */
+export type FolderState = {
+  enabled: boolean
+  root: string | null
+  truncated: boolean
+  images: LocalImage[]
+  open: boolean
+  loading: boolean
+  error: string | null
 }
 
 export type NewImage = {
@@ -54,6 +95,12 @@ export type NewImage = {
   src: string
   createdAt: number
   origin: EntryOrigin
+  /**
+   * Pins the new entry's parent. Variations must all hang off the image they were
+   * generated from; without this each one would parent to the previous variation
+   * and the strip would read as a chain that never happened.
+   */
+  parentId?: string | null
 }
 
 type Action =
@@ -67,14 +114,22 @@ type Action =
   | { type: 'setColor'; color: string }
   | { type: 'setWidth'; width: number }
   | { type: 'loadError'; message: string | null }
-  | { type: 'workflowsLoaded'; workflows: LoadedWorkflow[] }
+  | { type: 'workflowsLoaded'; workflows: LoadedWorkflow[]; loras: LoraMeta[] }
   | { type: 'workflowError'; message: string }
   | { type: 'selectWorkflow'; id: string }
+  | { type: 'setLora'; slot: number; selection: LoraSelection }
   | { type: 'setPrompt'; prompt: string }
   | { type: 'setSeed'; seed: number }
   | { type: 'setSeedLock'; locked: boolean }
   | { type: 'runState'; run: RunState }
-  | { type: 'runStarted'; seed: number }
+  | { type: 'runStarted'; seed: number; batchIndex: number; batchTotal: number }
+  | { type: 'batchEnded' }
+  | { type: 'setBatchCount'; count: number }
+  | { type: 'setBatchMode'; mode: BatchMode }
+  | { type: 'folderListed'; folder: LocalFolder }
+  | { type: 'folderError'; message: string }
+  | { type: 'folderOpened' }
+  | { type: 'folderClosed' }
 
 const INITIAL: EditorState = {
   doc: createDoc(''),
@@ -87,38 +142,67 @@ const INITIAL: EditorState = {
   workflows: [],
   workflowError: null,
   selectedWorkflowId: '',
+  loraCatalog: [],
+  loras: [],
   prompt: '',
   seed: randomSeed(),
   seedLocked: false,
+  batchCount: 1,
+  batchMode: 'variations',
+  batch: null,
   run: initialRunState(),
   runSeq: 0,
   history: emptyHistory(),
+  folder: {
+    enabled: false,
+    root: null,
+    truncated: false,
+    images: [],
+    open: false,
+    loading: false,
+    error: null,
+  },
+}
+
+/** How many LoRA slots a workflow declares — zero when it declares none. */
+function slotCount(workflows: LoadedWorkflow[], id: string): number {
+  return workflows.find((w) => w.meta.id === id)?.meta.loraNodes?.length ?? 0
 }
 
 function labelFor(history: HistoryState, origin: EntryOrigin): string {
-  if (origin.kind === 'generation') return nextGenerationLabel(history, origin.workflowId)
-  const uploads = history.entries.filter((e) => e.origin.kind === 'upload').length
-  return uploads === 0 ? 'Original' : `Original #${uploads + 1}`
+  // An upload always lands in a history that was just emptied, so it is always
+  // the one original.
+  return origin.kind === 'generation'
+    ? nextGenerationLabel(history, origin.workflowId)
+    : 'Original'
 }
 
 /** Every mutation delegates to src/core — no logic lives in the reducer itself. */
 function reducer(state: EditorState, action: Action): EditorState {
   switch (action.type) {
     case 'imageAdded': {
-      const { base, src, createdAt, origin } = action.image
+      const { base, src, createdAt, origin, parentId } = action.image
+      // Bringing in a new image starts a new line of work: the previous image's
+      // lineage is no longer something the user can meaningfully return to, so it
+      // is dropped. Everything else on the panel — workflow, instruction, seed,
+      // LoRAs, run count — is how they were working, and survives untouched.
+      const history = origin.kind === 'upload' ? emptyHistory() : state.history
       return {
         ...state,
         base,
         // A transformation result rebases: the marks are already baked into it.
         doc: action.rebased ? rebase(state.doc, base.id) : createDoc(base.id),
         loadError: null,
-        history: addEntry(state.history, base.id, {
-          label: labelFor(state.history, origin),
+        history: addEntry(history, base.id, {
+          label: labelFor(history, origin),
           src,
           width: base.width,
           height: base.height,
           createdAt,
-          parentId: state.history.currentId,
+          // `history`, not `state.history`: after a reset the old current id is
+          // gone, and parenting the new original to it would resurrect a link to
+          // an entry that no longer exists.
+          parentId: parentId ?? history.currentId,
           origin,
         }),
       }
@@ -147,7 +231,8 @@ function reducer(state: EditorState, action: Action): EditorState {
       return { ...state, width: action.width }
     case 'loadError':
       return { ...state, loadError: action.message }
-    case 'workflowsLoaded':
+    case 'workflowsLoaded': {
+      const selectedWorkflowId = action.workflows[0]?.meta.id ?? ''
       return {
         ...state,
         workflows: action.workflows,
@@ -155,12 +240,29 @@ function reducer(state: EditorState, action: Action): EditorState {
           action.workflows.length === 0
             ? 'No workflows are configured. Add one to public/workflows/manifest.json.'
             : null,
-        selectedWorkflowId: action.workflows[0]?.meta.id ?? '',
+        selectedWorkflowId,
+        loraCatalog: action.loras,
+        loras: emptySelections(slotCount(action.workflows, selectedWorkflowId)),
       }
+    }
     case 'workflowError':
-      return { ...state, workflows: [], workflowError: action.message }
+      return { ...state, workflows: [], workflowError: action.message, loras: [] }
     case 'selectWorkflow':
-      return { ...state, selectedWorkflowId: action.id }
+      // Re-selecting the same workflow must not discard the user's LoRA choices.
+      if (action.id === state.selectedWorkflowId) return state
+      // On a real change the slots are reset rather than carried over: the catalog
+      // is filtered per workflow, so a selection made for one workflow may name a
+      // file the next one cannot load.
+      return {
+        ...state,
+        selectedWorkflowId: action.id,
+        loras: emptySelections(slotCount(state.workflows, action.id)),
+      }
+    case 'setLora': {
+      const loras = [...state.loras]
+      loras[action.slot] = action.selection
+      return { ...state, loras }
+    }
     case 'setPrompt':
       return { ...state, prompt: action.prompt }
     case 'setSeed':
@@ -174,8 +276,25 @@ function reducer(state: EditorState, action: Action): EditorState {
         ...state,
         seed: action.seed,
         runSeq: state.runSeq + 1,
+        batch: { index: action.batchIndex, total: action.batchTotal },
         run: { ...initialRunState(), phase: 'uploading' },
       }
+    case 'batchEnded':
+      return { ...state, batch: null }
+    case 'setBatchCount':
+      return { ...state, batchCount: clampBatchCount(action.count) }
+    case 'setBatchMode':
+      return { ...state, batchMode: action.mode }
+    case 'folderListed': {
+      const { enabled, root, truncated, images } = action.folder
+      return { ...state, folder: { ...state.folder, enabled, root, truncated, images, loading: false, error: null } }
+    }
+    case 'folderError':
+      return { ...state, folder: { ...state.folder, loading: false, error: action.message } }
+    case 'folderOpened':
+      return { ...state, folder: { ...state.folder, open: true, loading: true } }
+    case 'folderClosed':
+      return { ...state, folder: { ...state.folder, open: false } }
   }
 }
 
@@ -187,6 +306,7 @@ export type TransformOutcome = {
   prompt: string
   seed: number
   promptId: string
+  loras: AppliedLora[]
 }
 
 export function useEditor() {
@@ -196,9 +316,9 @@ export function useEditor() {
   // reported at startup rather than after a failed transformation.
   useEffect(() => {
     let cancelled = false
-    loadWorkflows()
-      .then((workflows) => {
-        if (!cancelled) dispatch({ type: 'workflowsLoaded', workflows })
+    loadConfig()
+      .then(({ workflows, loras }) => {
+        if (!cancelled) dispatch({ type: 'workflowsLoaded', workflows, loras })
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -213,12 +333,37 @@ export function useEditor() {
     }
   }, [])
 
+  const refreshFolder = useCallback(async (): Promise<void> => {
+    try {
+      dispatch({ type: 'folderListed', folder: await listLocalImages() })
+    } catch (e) {
+      dispatch({
+        type: 'folderError',
+        message:
+          e instanceof LocalFolderError || e instanceof Error
+            ? e.message
+            : 'Could not list the image folder.',
+      })
+    }
+  }, [])
+
+  // Asked once at startup purely to learn whether a folder is configured — the
+  // toolbar button is left out entirely when one is not.
+  useEffect(() => {
+    void refreshFolder()
+  }, [refreshFolder])
+
   // ImageBitmaps are not state — they are handles the canvas draws from. Keyed by
   // the same id the history entry uses, so selecting an entry finds its bitmap.
   const bitmaps = useRef(new Map<string, ImageBitmap>())
 
   const adoptImage = useCallback(
-    async (blob: Blob, origin: EntryOrigin, rebased: boolean): Promise<BaseImage> => {
+    async (
+      blob: Blob,
+      origin: EntryOrigin,
+      rebased: boolean,
+      parentId?: string | null,
+    ): Promise<BaseImage> => {
       const bitmap = await createImageBitmap(blob)
       const base: BaseImage = {
         id: `img-${crypto.randomUUID()}`,
@@ -226,12 +371,17 @@ export function useEditor() {
         width: bitmap.width,
         height: bitmap.height,
       }
+      // An upload empties the history, so the bitmaps behind the discarded entries
+      // are unreachable — dropping them here keeps the map from growing for the
+      // life of the session. Done after createImageBitmap, so a file that turns
+      // out not to be an image leaves the existing session alone.
+      if (origin.kind === 'upload') bitmaps.current.clear()
       bitmaps.current.set(base.id, bitmap)
 
       dispatch({
         type: 'imageAdded',
         rebased,
-        image: { base, src: URL.createObjectURL(blob), createdAt: Date.now(), origin },
+        image: { base, src: URL.createObjectURL(blob), createdAt: Date.now(), origin, parentId },
       })
       return base
     },
@@ -250,6 +400,34 @@ export function useEditor() {
     [adoptImage],
   )
 
+  /**
+   * Adopt an image out of the server folder. It arrives as an upload, not a
+   * generation: it is a new starting point, so it resets the history exactly as
+   * opening a local file does.
+   */
+  const openLocalImage = useCallback(
+    async (path: string): Promise<BaseImage | null> => {
+      try {
+        const base = await adoptImage(await fetchLocalImage(path), { kind: 'upload' }, false)
+        dispatch({ type: 'folderClosed' })
+        return base
+      } catch {
+        // The picker stays open — the user's next move is almost always to pick a
+        // different file, not to start over.
+        dispatch({ type: 'loadError', message: `Could not open "${path}" from the image folder.` })
+        return null
+      }
+    },
+    [adoptImage],
+  )
+
+  const openFolderPicker = useCallback(() => {
+    dispatch({ type: 'folderOpened' })
+    // Re-listed on every open: the folder is live, and the whole point of pointing
+    // at one is that things appear in it while the app is running.
+    void refreshFolder()
+  }, [refreshFolder])
+
   const selectHistoryEntry = useCallback((id: string) => {
     const bitmap = bitmaps.current.get(id)
     if (!bitmap) return
@@ -261,75 +439,135 @@ export function useEditor() {
 
   const selected = state.workflows.find((w) => w.meta.id === state.selectedWorkflowId)
 
+  /** Slots this workflow declares, and the LoRAs it can actually load. */
+  const loraSlots = selected?.meta.loraNodes?.length ?? 0
+  const availableLoras = lorasFor(state.loraCatalog, state.selectedWorkflowId)
+
   const canRun =
     !!state.base &&
     !!selected &&
     !state.workflowError &&
+    // A batch briefly reads "done" between runs; without this the button would
+    // flicker back to enabled mid-batch and a second batch could be started.
+    state.batch === null &&
     state.run.phase !== 'uploading' &&
     state.run.phase !== 'queued' &&
     state.run.phase !== 'running'
 
   /**
-   * Composite the canvas, run it through the chosen workflow, and adopt the result
-   * as the new base image. The workspace is left untouched on any failure.
+   * Composite the canvas and run it through the chosen workflow `batchCount` times,
+   * adopting each result. The workspace is left untouched on any failure.
+   *
+   * The two modes differ only in what the next run consumes and where its result
+   * hangs in the history:
+   *
+   * - `variations` — every run is handed the same composite and parented to the
+   *   image the batch started from, so the results are siblings to choose between.
+   * - `serial` — each result becomes the next run's input and its parent, so the
+   *   results form a refinement chain.
+   *
+   * A serial pass never re-composites the canvas. Adopting a result rebases the
+   * document, which clears the marks, so the composite would be the result blob
+   * anyway — and reading it back would mean waiting on a canvas repaint mid-batch.
+   *
+   * A failure stops the batch where it is. Runs that already finished keep their
+   * history entries: they are real images that cost real GPU time, and discarding
+   * them because a later run failed would be the more surprising behaviour.
    */
-  const runTransform = useCallback(
-    async (getBlob: () => Promise<Blob>): Promise<TransformOutcome | null> => {
-      if (!selected || !state.base) return null
+  const runBatch = useCallback(
+    async (getBlob: () => Promise<Blob>): Promise<TransformOutcome[]> => {
+      if (!selected || !state.base) return []
 
-      const seed = state.seedLocked ? state.seed : randomSeed()
-      dispatch({ type: 'runStarted', seed })
+      const total = clampBatchCount(state.batchCount)
+      const seeds = batchSeeds(total, state.seed, state.seedLocked)
+      const applied = state.loras.filter((l): l is NonNullable<LoraSelection> => l !== null)
+      // Captured before anything is adopted, so every variation parents to the
+      // image the user actually started from.
+      const originId = state.history.currentId
+      const outcomes: TransformOutcome[] = []
 
       try {
-        const canvasBlob = await getBlob()
-        const result = await runWorkflow(
-          {
-            canvasBlob,
-            meta: selected.meta,
-            graph: selected.graph,
-            prompt: state.prompt,
-            seed,
-            timeoutMs: RUN_TIMEOUT_MS,
-          },
-          (run) => dispatch({ type: 'runState', run }),
-        )
+        let input = await getBlob()
 
-        const base = await adoptImage(
-          result.blob,
-          {
-            kind: 'generation',
+        for (let i = 0; i < total; i++) {
+          const seed = seeds[i]!
+          dispatch({ type: 'runStarted', seed, batchIndex: i + 1, batchTotal: total })
+
+          const result = await runWorkflow(
+            {
+              canvasBlob: input,
+              meta: selected.meta,
+              graph: selected.graph,
+              prompt: state.prompt,
+              seed,
+              loras: state.loras,
+              timeoutMs: RUN_TIMEOUT_MS,
+            },
+            (run) => dispatch({ type: 'runState', run }),
+          )
+
+          const base = await adoptImage(
+            result.blob,
+            {
+              kind: 'generation',
+              workflowId: selected.meta.id,
+              prompt: state.prompt,
+              seed,
+              promptId: result.promptId,
+              loras: applied,
+            },
+            true,
+            state.batchMode === 'variations' ? originId : undefined,
+          )
+
+          outcomes.push({
+            imageId: base.id,
             workflowId: selected.meta.id,
             prompt: state.prompt,
             seed,
             promptId: result.promptId,
-          },
-          true,
-        )
-        return {
-          imageId: base.id,
-          workflowId: selected.meta.id,
-          prompt: state.prompt,
-          seed,
-          promptId: result.promptId,
+            loras: applied,
+          })
+
+          if (state.batchMode === 'serial') input = result.blob
         }
       } catch {
         // runWorkflow has already pushed an error RunState carrying the reason.
-        return null
+      } finally {
+        dispatch({ type: 'batchEnded' })
       }
+
+      return outcomes
     },
-    [selected, state.base, state.prompt, state.seed, state.seedLocked, adoptImage],
+    [
+      selected,
+      state.base,
+      state.prompt,
+      state.seed,
+      state.seedLocked,
+      state.loras,
+      state.batchCount,
+      state.batchMode,
+      state.history.currentId,
+      adoptImage,
+    ],
   )
 
   return {
     state,
     selected,
     canRun,
+    loraSlots,
+    availableLoras,
     canUndo: canUndo(state.doc),
     canRedo: canRedo(state.doc),
     hasShapes: state.doc.shapes.length > 0,
     loadImageFile,
+    openLocalImage,
+    openFolderPicker,
+    closeFolderPicker: useCallback(() => dispatch({ type: 'folderClosed' }), []),
     selectHistoryEntry,
-    runTransform,
+    runBatch,
     commit: useCallback((shape: Shape) => dispatch({ type: 'commit', shape }), []),
     undo: useCallback(() => dispatch({ type: 'undo' }), []),
     redo: useCallback(() => dispatch({ type: 'redo' }), []),
@@ -341,6 +579,12 @@ export function useEditor() {
     setPrompt: useCallback((prompt: string) => dispatch({ type: 'setPrompt', prompt }), []),
     setSeed: useCallback((seed: number) => dispatch({ type: 'setSeed', seed }), []),
     setSeedLock: useCallback((locked: boolean) => dispatch({ type: 'setSeedLock', locked }), []),
+    setLora: useCallback(
+      (slot: number, selection: LoraSelection) => dispatch({ type: 'setLora', slot, selection }),
+      [],
+    ),
+    setBatchCount: useCallback((count: number) => dispatch({ type: 'setBatchCount', count }), []),
+    setBatchMode: useCallback((mode: BatchMode) => dispatch({ type: 'setBatchMode', mode }), []),
   }
 }
 

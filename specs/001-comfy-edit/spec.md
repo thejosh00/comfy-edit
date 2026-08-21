@@ -131,6 +131,9 @@ is back in the workspace and both later entries are still listed.
    **Then** the new result is added as a further entry and the entries it branched from remain.
 6. **Given** unfinished marks on the workspace image, **When** the user selects a different history
    entry, **Then** those marks are discarded and undo is unavailable for them.
+7. **Given** several history entries and a configured panel, **When** the user brings in a new image,
+   **Then** the strip contains only that image, and the workflow, instruction, seed, LoRA selections,
+   run count and repeat mode are all unchanged.
 
 ---
 
@@ -228,8 +231,14 @@ is back in the workspace and both later entries are still listed.
 
 #### History
 
-- **FR-034**: The system MUST record every image that has occupied the workspace — the one brought
-  in and each transformation result — as an entry in a visible history strip, in the order produced.
+- **FR-034**: The system MUST record every image that has occupied the workspace since the current
+  image was brought in — that image and each transformation result — as an entry in a visible history
+  strip, in the order produced.
+- **FR-034a**: Bringing a new image into the workspace MUST clear the history, leaving that image as
+  the only entry. A new source image starts a new line of work, and the previous image's lineage is
+  no longer something the user can meaningfully return to. Every other setting — the chosen workflow,
+  instruction, seed and lock, LoRA selections, run count and repeat mode — MUST be preserved, because
+  those describe how the user is working rather than what they are working on.
 - **FR-035**: Each history entry produced by a transformation MUST record the workflow, instruction,
   and seed that produced it.
 - **FR-036**: The system MUST indicate which history entry is currently in the workspace.

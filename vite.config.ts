@@ -1,10 +1,13 @@
 /// <reference types="vitest" />
 import { defineConfig, loadEnv, type ProxyOptions } from 'vite'
 import react from '@vitejs/plugin-react'
+import { localFolderPlugin } from './src/server/localFolder'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const target = process.env.COMFY_URL || env.COMFY_URL || 'http://127.0.0.1:8188'
+  // Optional. Unset means the app simply does not offer "Open from folder…".
+  const imagesDir = process.env.IMAGES_DIR || env.IMAGES_DIR || undefined
 
   const targetOrigin = new URL(target).origin
 
@@ -30,7 +33,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react()],
+    plugins: [react(), localFolderPlugin(imagesDir)],
     server: { proxy },
     preview: { proxy },
     test: {

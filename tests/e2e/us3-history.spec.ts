@@ -91,6 +91,52 @@ test.describe('US3: return to an earlier image', () => {
     expect(await centerPixel(page)).toEqual(TEAL)
   })
 
+  test('bringing in a new image starts a fresh history but keeps every setting', async ({
+    page,
+  }) => {
+    // A new source image starts a new line of work, so the previous image's
+    // lineage is no longer something the user can meaningfully return to. The
+    // panel, however, is how they were working — that survives.
+    await runTransformFlow(page, { prompt: 'one' })
+    await expect(entries(page)).toHaveCount(2)
+
+    await page.getByTestId(T.workflowSelect).selectOption('krea2-refine')
+    await page.getByTestId(T.promptInput).fill('keep this instruction')
+    await page.getByTestId(T.seedInput).fill('777')
+    await page.getByTestId(T.seedLock).check()
+    await page.getByTestId(T.runCount).selectOption('3')
+    await page.getByTestId(T.runMode).selectOption('serial')
+    await page.getByTestId(T.loraSelect).first().selectOption('krea2-darkbrush')
+
+    await loadFixture(page)
+
+    // Only the new image remains, and it is what the workspace is showing.
+    await expect(entries(page)).toHaveCount(1)
+    await expect(entries(page).first()).toHaveAttribute('data-selected', 'true')
+    await expect(entries(page).first()).toContainText('Original')
+    await expect(entries(page).first()).toHaveAttribute('data-parent-id', '')
+    expect(await centerPixel(page)).toEqual(TEAL)
+
+    await expect(page.getByTestId(T.workflowSelect)).toHaveValue('krea2-refine')
+    await expect(page.getByTestId(T.promptInput)).toHaveValue('keep this instruction')
+    await expect(page.getByTestId(T.seedInput)).toHaveValue('777')
+    await expect(page.getByTestId(T.seedLock)).toBeChecked()
+    await expect(page.getByTestId(T.runCount)).toHaveValue('3')
+    await expect(page.getByTestId(T.runMode)).toHaveValue('serial')
+    await expect(page.getByTestId(T.loraSelect).first()).toHaveValue('krea2-darkbrush')
+  })
+
+  test('the run that follows a new image numbers from the start again', async ({ page }) => {
+    await runTransformFlow(page, { prompt: 'one' })
+    await expect(entries(page).nth(1)).toContainText('passthrough #1')
+
+    await loadFixture(page)
+    await runTransformFlow(page, { prompt: 'after the reset' })
+
+    await expect(entries(page)).toHaveCount(2)
+    await expect(entries(page).nth(1)).toContainText('passthrough #1')
+  })
+
   test('a result of different dimensions is adopted by the workspace', async ({ page }) => {
     // The fake echoes the input size, so load a differently sized image and
     // confirm the readout follows the entry rather than sticking at 256x256.
