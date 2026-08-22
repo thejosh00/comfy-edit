@@ -6,17 +6,18 @@ import { T } from '../testids'
 type Props = {
   folder: FolderState
   onPick: (path: string) => void
+  onChangeFolder: () => void
   onClose: () => void
 }
 
 function status(folder: FolderState): string {
   if (folder.error) return folder.error
   if (folder.loading && folder.images.length === 0) return 'Reading the folder…'
-  if (folder.images.length === 0) return `No images in ${folder.root ?? 'the configured folder'}.`
+  if (folder.images.length === 0) return `No images in ${folder.dir ?? 'the chosen folder'}.`
   // Truncation is called out rather than passed over: a capped list looks exactly
   // like a complete one, and silently hiding files is the worse surprise.
   const capped = folder.truncated ? ' (showing the newest — there are more)' : ''
-  return `${folder.images.length} images in ${folder.root}${capped}`
+  return `${folder.images.length} images in ${folder.dir}${capped}`
 }
 
 /**
@@ -25,7 +26,7 @@ function status(folder: FolderState): string {
  * request and however many images the browser decides to render — the full bytes
  * are only fetched again on the one the user actually chooses.
  */
-export function FolderPicker({ folder, onPick, onClose }: Props) {
+export function FolderPicker({ folder, onPick, onChangeFolder, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -40,9 +41,14 @@ export function FolderPicker({ folder, onPick, onClose }: Props) {
       <div className="picker" data-testid={T.folderPicker} onClick={(e) => e.stopPropagation()}>
         <div className="picker-head">
           <strong>Open from folder</strong>
-          <button data-testid={T.folderPickerClose} onClick={onClose}>
-            Close
-          </button>
+          <span className="row">
+            <button data-testid={T.btnChangeFolder} onClick={onChangeFolder}>
+              Change folder…
+            </button>
+            <button data-testid={T.folderPickerClose} onClick={onClose}>
+              Close
+            </button>
+          </span>
         </div>
 
         <span className="status" data-testid={T.folderPickerStatus}>
@@ -59,7 +65,11 @@ export function FolderPicker({ folder, onPick, onClose }: Props) {
               title={displayName(image.path)}
               onClick={() => onPick(image.path)}
             >
-              <img src={localFileUrl(image.path)} alt={displayName(image.path)} loading="lazy" />
+              <img
+                src={localFileUrl(folder.dir ?? '', image.path)}
+                alt={displayName(image.path)}
+                loading="lazy"
+              />
               <span>{basename(image.path)}</span>
             </button>
           ))}

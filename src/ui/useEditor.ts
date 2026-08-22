@@ -28,8 +28,15 @@ import {
   type LoraMeta,
   type LoraSelection,
 } from '../core/loras'
-import { LocalFolderError, type LocalFolder, type LocalImage } from '../core/localImages'
 import {
+  FOLDER_STORAGE_KEY,
+  LocalFolderError,
+  type DirListing,
+  type LocalFolder,
+  type LocalImage,
+} from '../core/localImages'
+import {
+  browseDirs,
   fetchLocalImage,
   listLocalImages,
   loadConfig,
@@ -72,19 +79,26 @@ export type EditorState = {
   history: HistoryState
 
   folder: FolderState
+  chooser: ChooserState
 }
 
-/**
- * The optional folder of images on the server. `enabled` is false when no
- * IMAGES_DIR was configured, and the whole feature is then absent from the UI
- * rather than present and broken.
- */
+/** The chosen folder of images on the server, and its contents. */
 export type FolderState = {
-  enabled: boolean
-  root: string | null
+  /** Absolute path of the chosen folder; null until one has been chosen. */
+  dir: string | null
   truncated: boolean
   images: LocalImage[]
   open: boolean
+  loading: boolean
+  error: string | null
+}
+
+/** The folder chooser: one rung of the server's filesystem at a time. */
+export type ChooserState = {
+  open: boolean
+  listing: DirListing | null
+  /** The editable path field, which is not always a folder that exists yet. */
+  path: string
   loading: boolean
   error: string | null
 }
@@ -130,6 +144,12 @@ type Action =
   | { type: 'folderError'; message: string }
   | { type: 'folderOpened' }
   | { type: 'folderClosed' }
+  | { type: 'folderChosen'; dir: string }
+  | { type: 'chooserOpened'; path: string }
+  | { type: 'chooserClosed' }
+  | { type: 'chooserListed'; listing: DirListing }
+  | { type: 'chooserError'; message: string }
+  | { type: 'chooserPathEdited'; path: string }
 
 const INITIAL: EditorState = {
   doc: createDoc(''),
@@ -154,14 +174,24 @@ const INITIAL: EditorState = {
   runSeq: 0,
   history: emptyHistory(),
   folder: {
-    enabled: false,
-    root: null,
+    dir: null,
     truncated: false,
     images: [],
     open: false,
     loading: false,
     error: null,
   },
+  chooser: { open: false, listing: null, path: '', loading: false, error: null },
+}
+
+/**
+ * The chosen folder outlives a reload. Read once at startup rather than in an
+ * effect, so the first render already knows whether a folder is chosen and the
+ * toolbar does not change under the user a moment later.
+ */
+function withStoredDir(initial: EditorState): EditorState {
+  const dir = localStorage.getItem(FOLDER_STORAGE_KEY)
+  return dir ? { ...initial, folder: { ...initial.folder, dir } } : initial
 }
 
 /** How many LoRA slots a workflow declares — zero when it declares none. */
@@ -286,8 +316,8 @@ function reducer(state: EditorState, action: Action): EditorState {
     case 'setBatchMode':
       return { ...state, batchMode: action.mode }
     case 'folderListed': {
-      const { enabled, root, truncated, images } = action.folder
-      return { ...state, folder: { ...state.folder, enabled, root, truncated, images, loading: false, error: null } }
+      const { truncated, images } = action.folder
+      return { ...state, folder: { ...state.folder, truncated, images, loading: false, error: null } }
     }
     case 'folderError':
       return { ...state, folder: { ...state.folder, loading: false, error: action.message } }
@@ -295,6 +325,39 @@ function reducer(state: EditorState, action: Action): EditorState {
       return { ...state, folder: { ...state.folder, open: true, loading: true } }
     case 'folderClosed':
       return { ...state, folder: { ...state.folder, open: false } }
+    case 'folderChosen':
+      // The previous folder's images go with it. Keeping them on screen while the
+      // new listing loads would show one folder's contents under another's name.
+      return {
+        ...state,
+        folder: { ...state.folder, dir: action.dir, images: [], truncated: false, open: true, loading: true, error: null },
+        chooser: { ...state.chooser, open: false },
+      }
+    case 'chooserOpened':
+      return {
+        ...state,
+        folder: { ...state.folder, open: false },
+        chooser: { open: true, listing: null, path: action.path, loading: true, error: null },
+      }
+    case 'chooserClosed':
+      return { ...state, chooser: { ...state.chooser, open: false } }
+    case 'chooserListed':
+      return {
+        ...state,
+        chooser: {
+          ...state.chooser,
+          listing: action.listing,
+          // Snapped to what the server resolved, so the field shows a real,
+          // canonical path rather than whatever was typed to get there.
+          path: action.listing.path,
+          loading: false,
+          error: null,
+        },
+      }
+    case 'chooserError':
+      return { ...state, chooser: { ...state.chooser, loading: false, error: action.message } }
+    case 'chooserPathEdited':
+      return { ...state, chooser: { ...state.chooser, path: action.path } }
   }
 }
 
@@ -310,7 +373,7 @@ export type TransformOutcome = {
 }
 
 export function useEditor() {
-  const [state, dispatch] = useReducer(reducer, INITIAL)
+  const [state, dispatch] = useReducer(reducer, INITIAL, withStoredDir)
 
   // Validate every workflow before a run is possible, so misconfiguration is
   // reported at startup rather than after a failed transformation.
@@ -333,25 +396,44 @@ export function useEditor() {
     }
   }, [])
 
-  const refreshFolder = useCallback(async (): Promise<void> => {
+  const message = (e: unknown, fallback: string): string =>
+    e instanceof LocalFolderError || e instanceof Error ? e.message : fallback
+
+  /**
+   * Both of these can be in flight more than once at a time — opening the chooser
+   * starts a listing, and the user can ask for another before it lands. Responses
+   * are not guaranteed to arrive in the order they were asked for, so each one
+   * carries a ticket and a stale answer is dropped. Without this a slow first
+   * listing overwrites a fast second one, which also clears the error banner the
+   * second one had just set.
+   */
+  const folderSeq = useRef(0)
+  const chooserSeq = useRef(0)
+
+  const refreshFolder = useCallback(async (dir: string): Promise<void> => {
+    const seq = ++folderSeq.current
     try {
-      dispatch({ type: 'folderListed', folder: await listLocalImages() })
+      const folder = await listLocalImages(dir)
+      if (seq === folderSeq.current) dispatch({ type: 'folderListed', folder })
     } catch (e) {
-      dispatch({
-        type: 'folderError',
-        message:
-          e instanceof LocalFolderError || e instanceof Error
-            ? e.message
-            : 'Could not list the image folder.',
-      })
+      if (seq === folderSeq.current) {
+        dispatch({ type: 'folderError', message: message(e, 'Could not list the image folder.') })
+      }
     }
   }, [])
 
-  // Asked once at startup purely to learn whether a folder is configured — the
-  // toolbar button is left out entirely when one is not.
-  useEffect(() => {
-    void refreshFolder()
-  }, [refreshFolder])
+  /** Move the chooser to a directory. No path means the server's home directory. */
+  const browseTo = useCallback(async (path?: string | null): Promise<void> => {
+    const seq = ++chooserSeq.current
+    try {
+      const listing = await browseDirs(path)
+      if (seq === chooserSeq.current) dispatch({ type: 'chooserListed', listing })
+    } catch (e) {
+      if (seq === chooserSeq.current) {
+        dispatch({ type: 'chooserError', message: message(e, 'Could not open that folder.') })
+      }
+    }
+  }, [])
 
   // ImageBitmaps are not state — they are handles the canvas draws from. Keyed by
   // the same id the history entry uses, so selecting an entry finds its bitmap.
@@ -407,8 +489,10 @@ export function useEditor() {
    */
   const openLocalImage = useCallback(
     async (path: string): Promise<BaseImage | null> => {
+      const dir = state.folder.dir
+      if (!dir) return null
       try {
-        const base = await adoptImage(await fetchLocalImage(path), { kind: 'upload' }, false)
+        const base = await adoptImage(await fetchLocalImage(dir, path), { kind: 'upload' }, false)
         dispatch({ type: 'folderClosed' })
         return base
       } catch {
@@ -418,15 +502,41 @@ export function useEditor() {
         return null
       }
     },
-    [adoptImage],
+    [adoptImage, state.folder.dir],
   )
 
+  /** Browse from the chosen folder if there is one, otherwise from home. */
+  const openChooser = useCallback(() => {
+    const from = state.folder.dir
+    dispatch({ type: 'chooserOpened', path: from ?? '' })
+    void browseTo(from)
+  }, [browseTo, state.folder.dir])
+
+  /**
+   * "Open from folder…" goes straight to the chooser until a folder has been
+   * chosen — with nothing chosen there is no grid to show, and making the user
+   * dismiss an empty one first would be a step for nothing.
+   */
   const openFolderPicker = useCallback(() => {
+    const dir = state.folder.dir
+    if (!dir) {
+      openChooser()
+      return
+    }
     dispatch({ type: 'folderOpened' })
     // Re-listed on every open: the folder is live, and the whole point of pointing
     // at one is that things appear in it while the app is running.
-    void refreshFolder()
-  }, [refreshFolder])
+    void refreshFolder(dir)
+  }, [openChooser, refreshFolder, state.folder.dir])
+
+  const chooseFolder = useCallback(
+    (dir: string) => {
+      localStorage.setItem(FOLDER_STORAGE_KEY, dir)
+      dispatch({ type: 'folderChosen', dir })
+      void refreshFolder(dir)
+    },
+    [refreshFolder],
+  )
 
   const selectHistoryEntry = useCallback((id: string) => {
     const bitmap = bitmaps.current.get(id)
@@ -565,7 +675,12 @@ export function useEditor() {
     loadImageFile,
     openLocalImage,
     openFolderPicker,
+    openChooser,
+    chooseFolder,
+    browseTo,
     closeFolderPicker: useCallback(() => dispatch({ type: 'folderClosed' }), []),
+    closeChooser: useCallback(() => dispatch({ type: 'chooserClosed' }), []),
+    editChooserPath: useCallback((path: string) => dispatch({ type: 'chooserPathEdited', path }), []),
     selectHistoryEntry,
     runBatch,
     commit: useCallback((shape: Shape) => dispatch({ type: 'commit', shape }), []),

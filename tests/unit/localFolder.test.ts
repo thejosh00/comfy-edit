@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { utimesSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { listImages, resolveWithinRoot, contentTypeFor } from '../../src/server/localFolder'
+import { listDirs, listImages, resolveWithinRoot, contentTypeFor } from '../../src/server/localFolder'
 
 const GALLERY = fileURLToPath(new URL('../fixtures/gallery', import.meta.url))
+const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url))
 
 // Fixed rather than inherited from the checkout: the cap test below turns on
 // which file is newer, and git does not preserve mtimes.
@@ -43,7 +44,7 @@ describe('listImages', () => {
     expect(blue.mtime).toBeGreaterThan(0)
   })
 
-  it('reports a missing folder as empty rather than throwing — a typo in IMAGES_DIR must not take the app down', async () => {
+  it('reports a missing folder as empty rather than throwing — a remembered folder can be deleted', async () => {
     const { images, truncated } = await listImages(resolve(GALLERY, 'does-not-exist'))
     expect(images).toEqual([])
     expect(truncated).toBe(false)
@@ -51,6 +52,15 @@ describe('listImages', () => {
 
   it('caps the listing and says when it capped, rather than silently showing a subset', async () => {
     const { images, truncated } = await listImages(GALLERY, { limit: 1 })
+    expect(images).toHaveLength(1)
+    expect(truncated).toBe(true)
+  })
+
+  it('gives up walking once the scan budget is spent, and reports it as truncated', async () => {
+    // The chooser can be pointed at any folder, including a home directory with
+    // a hundred thousand files under it. Without a budget the picker would hang
+    // on a full recursive stat of the tree.
+    const { images, truncated } = await listImages(GALLERY, { scanLimit: 1 })
     expect(images).toHaveLength(1)
     expect(truncated).toBe(true)
   })
@@ -63,6 +73,60 @@ describe('listImages', () => {
     // exactly the wrong half.
     const { images } = await listImages(GALLERY, { limit: 1 })
     expect(images.map((i) => i.path)).toEqual(['nested/green.png'])
+  })
+})
+
+describe('listDirs', () => {
+  it('lists the subdirectories of a directory', async () => {
+    const listing = await listDirs(GALLERY)
+    expect(listing?.dirs).toEqual(['nested'])
+  })
+
+  it('lists directories only — the chooser picks folders, not files', async () => {
+    const listing = await listDirs(GALLERY)
+    expect(listing?.dirs).not.toContain('blue.png')
+    expect(listing?.dirs).not.toContain('notes.txt')
+  })
+
+  it('omits dot-directories, matching what the image listing walks', async () => {
+    const listing = await listDirs(GALLERY)
+    expect(listing?.dirs).not.toContain('.hidden')
+  })
+
+  it('sorts alphabetically, the same order the images are shown in', async () => {
+    const listing = await listDirs(FIXTURES)
+    expect(listing?.dirs).toEqual([...listing!.dirs].sort())
+  })
+
+  it('reports the parent, which is what makes "up" possible', async () => {
+    const listing = await listDirs(GALLERY)
+    expect(listing?.path).toBe(GALLERY)
+    expect(listing?.parent).toBe(FIXTURES)
+  })
+
+  it('reports no parent at the filesystem root, so "up" can be hidden there', async () => {
+    const listing = await listDirs('/')
+    expect(listing?.parent).toBeNull()
+  })
+
+  it('normalises the path it was given, so the chooser shows a canonical one', async () => {
+    const listing = await listDirs(`${GALLERY}/nested/..`)
+    expect(listing?.path).toBe(GALLERY)
+  })
+
+  it('returns null for a path that does not exist', async () => {
+    expect(await listDirs(`${GALLERY}/nowhere`)).toBeNull()
+  })
+
+  it('returns null for a file — a file is not somewhere to browse to', async () => {
+    expect(await listDirs(`${GALLERY}/blue.png`)).toBeNull()
+  })
+
+  it('returns null for a relative path, which has no meaning to the browser', async () => {
+    // The client only ever sends absolute paths back; a relative one would be
+    // resolved against the dev server's working directory, which is nobody's
+    // intent and would silently show the wrong folder.
+    expect(await listDirs('tests/fixtures')).toBeNull()
   })
 })
 

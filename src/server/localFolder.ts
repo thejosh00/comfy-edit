@@ -12,13 +12,15 @@
  */
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, stat } from 'node:fs/promises'
-import { extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Connect, Plugin } from 'vite'
 import {
   alphabetical,
   isImageFilename,
   newestFirst,
   LOCAL_BASE,
+  type DirListing,
   type LocalImage,
 } from '../core/localImages'
 
@@ -27,6 +29,14 @@ const DEFAULT_LIMIT = 500
 
 /** Deep enough for date-organised output folders, shallow enough to stay quick. */
 const MAX_DEPTH = 6
+
+/**
+ * How much of a tree to look at before giving up on seeing all of it. The folder
+ * is chosen in the app, so it can be a home directory with a hundred thousand
+ * files under it — without a budget the picker would hang on a full recursive
+ * stat. Spending the budget reports as `truncated`, the same as any other cap.
+ */
+const SCAN_LIMIT = 5000
 
 const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -42,23 +52,61 @@ export function contentTypeFor(name: string): string {
   return CONTENT_TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream'
 }
 
+/**
+ * The subdirectories of `path`, for the folder chooser, or null if `path` is not
+ * a directory that can be browsed. Only names are returned — no recursion and no
+ * image counting, so opening a rung stays cheap on a large tree.
+ */
+export async function listDirs(path: string): Promise<DirListing | null> {
+  // A relative path would resolve against the dev server's working directory,
+  // which is nobody's intent; the client only ever sends absolute ones back.
+  if (!path || !isAbsolute(path) || path.includes('\0')) return null
+
+  const abs = resolve(path)
+  const info = await stat(abs).catch(() => null)
+  if (!info?.isDirectory()) return null
+
+  const entries = await readdir(abs, { withFileTypes: true }).catch(() => null)
+  if (!entries) return null
+
+  const dirs = entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+
+  const parent = dirname(abs)
+  return { path: abs, parent: parent === abs ? null : parent, dirs }
+}
+
+/** Where the chooser opens when it has nowhere else to start. */
+export function defaultBrowsePath(): string {
+  return homedir()
+}
+
 export type Listing = { images: LocalImage[]; truncated: boolean }
 
 /**
  * Every image under `root`, in alphabetical order. A root that does not exist
- * lists as empty rather than throwing: a typo in IMAGES_DIR should leave the rest
- * of the app working, not take the dev server down at startup.
+ * lists as empty rather than throwing: a folder can be deleted between being
+ * chosen and being opened again, and that should read as "no images" rather than
+ * taking the picker down.
  */
 export async function listImages(
   root: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; scanLimit?: number } = {},
 ): Promise<Listing> {
   const limit = opts.limit ?? DEFAULT_LIMIT
+  const scanLimit = opts.scanLimit ?? SCAN_LIMIT
   const rootAbs = resolve(root)
   const found: LocalImage[] = []
+  let exhausted = false
 
   async function walk(dir: string, rel: string, depth: number): Promise<void> {
     if (depth > MAX_DEPTH) return
+    if (found.length >= scanLimit) {
+      exhausted = true
+      return
+    }
 
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
     if (!entries) return
@@ -78,6 +126,10 @@ export async function listImages(
         continue
       }
       if (!entry.isFile() || !isImageFilename(entry.name)) continue
+      if (found.length >= scanLimit) {
+        exhausted = true
+        return
+      }
 
       const info = await stat(childAbs).catch(() => null)
       if (!info) continue
@@ -92,7 +144,7 @@ export async function listImages(
   // capping A-Z would keep the oldest half. What comes back is then sorted for
   // reading, which is what the picker shows.
   const kept = newestFirst(found).slice(0, limit)
-  return { images: alphabetical(kept), truncated: found.length > limit }
+  return { images: alphabetical(kept), truncated: exhausted || found.length > limit }
 }
 
 /**
@@ -131,30 +183,58 @@ function notFound(res: import('node:http').ServerResponse): void {
 }
 
 /**
- * Mounts /local/images (the listing) and /local/file (one image) when IMAGES_DIR
- * is set. With no folder configured the listing still answers, reporting
- * `enabled: false` so the UI can leave the button out — a 404 there would be
- * indistinguishable from the middleware being broken.
+ * Mounts the three routes behind the folder chooser:
+ *
+ *   /local/dirs?path=   the subdirectories of one directory, for browsing
+ *   /local/images?dir=  every image under a chosen directory
+ *   /local/file?dir=&path=  one of those images
+ *
+ * The directory is chosen in the app and travels with each request, so nothing
+ * here holds mutable state and two tabs can sit in different folders.
+ *
+ * Note what that means: any directory the dev server's user can read is
+ * browsable, and any image under a chosen one is readable, by anything that can
+ * reach this port. That is the same trust boundary the /comfy proxy already
+ * assumes — a dev server on the loopback interface — but it is a wider surface
+ * than a single configured root, so it is worth knowing about.
  */
-export function localFolderPlugin(dir: string | undefined): Plugin {
-  const root = dir ? resolve(dir) : null
-
+export function localFolderPlugin(): Plugin {
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
 
+    if (url.pathname === `${LOCAL_BASE}/dirs`) {
+      const path = url.searchParams.get('path') || defaultBrowsePath()
+      void listDirs(path).then((listing) => {
+        if (!listing) {
+          notFound(res)
+          return
+        }
+        sendJson(res, listing)
+      })
+      return
+    }
+
     if (url.pathname === `${LOCAL_BASE}/images`) {
-      if (!root) {
-        sendJson(res, { enabled: false, root: null, truncated: false, images: [] })
+      const dir = url.searchParams.get('dir') ?? ''
+      if (!dir || !isAbsolute(dir) || dir.includes('\0')) {
+        notFound(res)
         return
       }
+      const root = resolve(dir)
       void listImages(root).then(({ images, truncated }) => {
-        sendJson(res, { enabled: true, root, truncated, images })
+        sendJson(res, { root, truncated, images })
       })
       return
     }
 
     if (url.pathname === `${LOCAL_BASE}/file`) {
-      const abs = root && resolveWithinRoot(root, url.searchParams.get('path') ?? '')
+      const dir = url.searchParams.get('dir') ?? ''
+      // The traversal guard still earns its keep: it is what keeps a chosen
+      // folder's listing and its file reads describing the same set of files.
+      const abs =
+        isAbsolute(dir) && !dir.includes('\0')
+          ? resolveWithinRoot(dir, url.searchParams.get('path') ?? '')
+          : null
       if (!abs) {
         notFound(res)
         return

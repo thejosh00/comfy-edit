@@ -2,10 +2,13 @@ import { describe, it, expect } from 'vitest'
 import {
   alphabetical,
   basename,
+  dirsUrl,
   displayName,
+  imagesUrl,
   isImageFilename,
   localFileUrl,
   newestFirst,
+  parseDirListing,
   parseLocalFolder,
   LocalFolderError,
   type LocalImage,
@@ -118,13 +121,67 @@ describe('alphabetical', () => {
 
 describe('localFileUrl', () => {
   it('points at the same-origin middleware, so the canvas is never tainted', () => {
-    expect(localFileUrl('blue.png')).toBe('/local/file?path=blue.png')
+    const url = new URL(localFileUrl('/srv/images', 'blue.png'), 'http://x')
+    expect(url.pathname).toBe('/local/file')
+    expect(url.searchParams.get('dir')).toBe('/srv/images')
+    expect(url.searchParams.get('path')).toBe('blue.png')
   })
 
   it('encodes separators and spaces rather than letting them reshape the URL', () => {
-    const url = localFileUrl('holiday snaps/a&b.png')
-    expect(url).toBe('/local/file?path=holiday+snaps%2Fa%26b.png')
-    expect(new URL(url, 'http://x').searchParams.get('path')).toBe('holiday snaps/a&b.png')
+    const url = localFileUrl('/srv/my images', 'holiday snaps/a&b.png')
+    expect(url).toContain('%26')
+    const parsed = new URL(url, 'http://x')
+    expect(parsed.searchParams.get('dir')).toBe('/srv/my images')
+    expect(parsed.searchParams.get('path')).toBe('holiday snaps/a&b.png')
+  })
+})
+
+describe('imagesUrl', () => {
+  it('names the directory to list', () => {
+    const url = new URL(imagesUrl('/srv/my images'), 'http://x')
+    expect(url.pathname).toBe('/local/images')
+    expect(url.searchParams.get('dir')).toBe('/srv/my images')
+  })
+})
+
+describe('dirsUrl', () => {
+  it('names the directory to browse', () => {
+    const url = new URL(dirsUrl('/srv/images'), 'http://x')
+    expect(url.pathname).toBe('/local/dirs')
+    expect(url.searchParams.get('path')).toBe('/srv/images')
+  })
+
+  it('omits the path entirely when there is none, which is what asks for the default', () => {
+    // The server answers a pathless request with the home directory. Sending an
+    // empty string instead would be a request to browse "", which is not a place.
+    expect(dirsUrl()).toBe('/local/dirs')
+    expect(dirsUrl(null)).toBe('/local/dirs')
+  })
+})
+
+describe('parseDirListing', () => {
+  it('reads a directory listing', () => {
+    const listing = parseDirListing({
+      path: '/srv/images',
+      parent: '/srv',
+      dirs: ['nested', 'renders'],
+    })
+    expect(listing).toEqual({ path: '/srv/images', parent: '/srv', dirs: ['nested', 'renders'] })
+  })
+
+  it('accepts a null parent, which is how the filesystem root says it has none', () => {
+    expect(parseDirListing({ path: '/', parent: null, dirs: [] }).parent).toBeNull()
+  })
+
+  it.each([null, 'nope', {}, { path: '/x', dirs: 'nope' }, { path: 7, dirs: [] }])(
+    'rejects a response that is not a directory listing: %s',
+    (json) => {
+      expect(() => parseDirListing(json)).toThrow(LocalFolderError)
+    },
+  )
+
+  it('rejects a non-string directory name', () => {
+    expect(() => parseDirListing({ path: '/x', parent: null, dirs: [7] })).toThrow(LocalFolderError)
   })
 })
 
@@ -153,30 +210,25 @@ describe('basename', () => {
 })
 
 describe('parseLocalFolder', () => {
-  it('reads a configured folder', () => {
+  it('reads a folder listing', () => {
     const folder = parseLocalFolder({
-      enabled: true,
       root: '/srv/images',
       truncated: false,
       images: [{ path: 'blue.png', size: 663, mtime: 12 }],
     })
-    expect(folder.enabled).toBe(true)
     expect(folder.root).toBe('/srv/images')
     expect(folder.images).toEqual([{ path: 'blue.png', size: 663, mtime: 12 }])
   })
 
-  it('reads the disabled response served when no folder is configured', () => {
-    const folder = parseLocalFolder({ enabled: false, root: null, truncated: false, images: [] })
-    expect(folder.enabled).toBe(false)
-    expect(folder.images).toEqual([])
+  it('reads an empty folder', () => {
+    expect(parseLocalFolder({ root: '/srv/empty', truncated: false, images: [] }).images).toEqual([])
   })
 
   it('carries the truncation flag, so a capped listing can say so', () => {
-    expect(parseLocalFolder({ enabled: true, root: '/x', truncated: true, images: [] }).truncated)
-      .toBe(true)
+    expect(parseLocalFolder({ root: '/x', truncated: true, images: [] }).truncated).toBe(true)
   })
 
-  it.each([null, 'nope', {}, { enabled: true, images: 'nope' }])(
+  it.each([null, 'nope', {}, { root: '/x', images: 'nope' }])(
     'rejects a response that is not a folder listing: %s',
     (json) => {
       expect(() => parseLocalFolder(json)).toThrow(LocalFolderError)
@@ -184,7 +236,8 @@ describe('parseLocalFolder', () => {
   )
 
   it('rejects an entry missing a path — a thumbnail with no URL is not renderable', () => {
-    expect(() => parseLocalFolder({ enabled: true, root: '/x', images: [{ size: 1, mtime: 1 }] }))
-      .toThrow(LocalFolderError)
+    expect(() => parseLocalFolder({ root: '/x', images: [{ size: 1, mtime: 1 }] })).toThrow(
+      LocalFolderError,
+    )
   })
 })

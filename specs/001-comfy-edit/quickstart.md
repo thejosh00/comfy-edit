@@ -71,24 +71,37 @@ path worked.
 
 ## Open images from a folder on this machine
 
-Point the dev server at a folder and the toolbar gains **Open from folder…**, which lists the images
-under it and loads the one you pick:
-
-```bash
-IMAGES_DIR=~/Pictures/renders npm run dev
-```
+**Open from folder…** in the toolbar opens a folder chooser, then lists the images under whatever
+you pick. No configuration and no restart — the choice is made in the app and remembered in
+`localStorage` under `comfy-edit.imagesDir`.
 
 The folder is ours, not ComfyUI's — it can be one ComfyUI has never heard of, because a transform
-uploads the composited canvas rather than referring to a path on the server. Details:
+uploads the composited canvas rather than referring to a path on the server.
+
+A browser cannot show a native picker for a path on the machine running the dev server; that dialog
+only returns files the *browser* can reach. So the chooser is drawn from our own listing: click down
+through subfolders, or paste a path into the field, which is the quicker way to somewhere far away.
+
+Details:
 
 - Served by `src/server/localFolder.ts`, a Vite middleware mounted at `/local/*` in both `dev` and
   `preview`. Same-origin for the same reason `/comfy/*` is: a cross-origin image taints the canvas.
+  - `/local/dirs?path=` — subdirectories of one directory (home when the path is omitted)
+  - `/local/images?dir=` — every image under a chosen folder
+  - `/local/file?dir=&path=` — one of those images
 - Recurses up to 6 levels and lists alphabetically, numerically within a name (`render-2` before
   `render-10`). Capped at 500 images — by recency, so a big folder keeps the newest rather than the
-  first 500 names, and the picker says when it capped.
+  first 500 names — and gives up walking after 5000. Either cap is reported in the picker.
 - Skips dot-directories, non-images, and symlinks. `/local/file` refuses any path that resolves
-  outside the root, so the route is an image source and not a fileserver.
-- Unset `IMAGES_DIR` and the button is simply absent.
+  outside the chosen folder, so the route is an image source and not a fileserver.
+
+### What this exposes
+
+The chosen folder travels with each request rather than being fixed at startup, which means any
+directory the dev server's user can read is browsable, and any image under a chosen one is readable,
+by anything that can reach the port. That is the same trust boundary `/comfy/*` already assumes — a
+dev server on the loopback interface — but it is wider than a single configured root. Don't run the
+dev server on a public interface.
 
 ---
 

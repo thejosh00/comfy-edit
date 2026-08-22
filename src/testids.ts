@@ -31,6 +31,17 @@ export const T = {
   folderPickerItem: 'folder-picker-item',
   folderPickerStatus: 'folder-picker-status',
   folderPickerClose: 'folder-picker-close',
+  btnChangeFolder: 'btn-change-folder',
+
+  // Folder chooser
+  dirChooser: 'dir-chooser',
+  dirChooserPath: 'dir-chooser-path',
+  // One per subdirectory, distinguished by data-name.
+  dirChooserEntry: 'dir-chooser-entry',
+  dirChooserUp: 'dir-chooser-up',
+  dirChooserUse: 'dir-chooser-use',
+  dirChooserError: 'dir-chooser-error',
+  dirChooserClose: 'dir-chooser-close',
 
   // Transform panel
   workflowSelect: 'workflow-select',

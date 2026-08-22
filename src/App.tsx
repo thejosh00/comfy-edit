@@ -4,6 +4,7 @@ import { Toolbar } from './ui/Toolbar'
 import { TransformPanel } from './ui/TransformPanel'
 import { HistoryStrip } from './ui/HistoryStrip'
 import { FolderPicker } from './ui/FolderPicker'
+import { DirectoryChooser } from './ui/DirectoryChooser'
 import { useEditor } from './ui/useEditor'
 import { T } from './testids'
 
@@ -70,7 +71,7 @@ export function App() {
         onRedo={editor.redo}
         onClear={editor.clear}
         onPickFile={() => fileRef.current?.click()}
-        onPickFolder={state.folder.enabled ? editor.openFolderPicker : null}
+        onPickFolder={editor.openFolderPicker}
         sizeLabel={sizeLabel}
       />
 
@@ -116,7 +117,18 @@ export function App() {
         <FolderPicker
           folder={state.folder}
           onPick={(path) => void editor.openLocalImage(path)}
+          onChangeFolder={editor.openChooser}
           onClose={editor.closeFolderPicker}
+        />
+      )}
+
+      {state.chooser.open && (
+        <DirectoryChooser
+          chooser={state.chooser}
+          onBrowse={(path) => void editor.browseTo(path)}
+          onEditPath={editor.editChooserPath}
+          onChoose={editor.chooseFolder}
+          onClose={editor.closeChooser}
         />
       )}
 

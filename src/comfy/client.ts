@@ -7,10 +7,13 @@ import {
 } from '../core/workflow'
 import { parseLoraManifest, type LoraMeta } from '../core/loras'
 import {
+  dirsUrl,
+  imagesUrl,
   localFileUrl,
+  parseDirListing,
   parseLocalFolder,
-  LOCAL_BASE,
   LocalFolderError,
+  type DirListing,
   type LocalFolder,
 } from '../core/localImages'
 import type { OutputImageRef } from '../core/comfyEvents'
@@ -95,24 +98,35 @@ export async function fetchImageBlob(ref: OutputImageRef): Promise<Blob> {
 }
 
 /**
- * List the images in the folder the dev server was pointed at. Served by our own
- * middleware (src/server/localFolder.ts), not by ComfyUI — the folder is one
- * ComfyUI need never have heard of, since a transform uploads the canvas anyway.
+ * List the images in a chosen folder. Served by our own middleware
+ * (src/server/localFolder.ts), not by ComfyUI — the folder is one ComfyUI need
+ * never have heard of, since a transform uploads the canvas anyway.
  */
-export async function listLocalImages(): Promise<LocalFolder> {
-  const res = await fetch(`${LOCAL_BASE}/images`)
+export async function listLocalImages(dir: string): Promise<LocalFolder> {
+  const res = await fetch(imagesUrl(dir))
   if (!res.ok) {
-    throw new LocalFolderError(`Could not list the image folder (${res.status}).`)
+    throw new LocalFolderError(`Could not read "${dir}" (${res.status}).`)
   }
   return parseLocalFolder(await res.json())
 }
 
-export async function fetchLocalImage(path: string): Promise<Blob> {
-  const res = await fetch(localFileUrl(path))
+export async function fetchLocalImage(dir: string, path: string): Promise<Blob> {
+  const res = await fetch(localFileUrl(dir, path))
   if (!res.ok) {
     throw new LocalFolderError(`Could not read "${path}" from the image folder (${res.status}).`)
   }
   return res.blob()
+}
+
+/** One rung of the folder chooser. No path asks for the home directory. */
+export async function browseDirs(path?: string | null): Promise<DirListing> {
+  const res = await fetch(dirsUrl(path))
+  if (!res.ok) {
+    throw new LocalFolderError(
+      path ? `"${path}" is not a folder that can be opened.` : 'Could not read the home folder.',
+    )
+  }
+  return parseDirListing(await res.json())
 }
 
 export function comfyWsUrl(clientId: string): string {

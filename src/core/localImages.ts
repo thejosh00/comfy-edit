@@ -24,14 +24,29 @@ export type LocalImage = {
 }
 
 export type LocalFolder = {
-  /** False when no IMAGES_DIR is configured — the feature is then simply absent. */
-  enabled: boolean
   /** The absolute root, shown to the user so they know which folder they are in. */
   root: string | null
   /** True when the listing hit its cap, so the UI can say the list is partial. */
   truncated: boolean
   images: LocalImage[]
 }
+
+/** One rung of the directory chooser. */
+export type DirListing = {
+  /** Absolute and normalised, as the server resolved it. */
+  path: string
+  /** Null at the filesystem root, which is what hides "up". */
+  parent: string | null
+  /** Subdirectory names, alphabetical. */
+  dirs: string[]
+}
+
+/**
+ * Where the chosen folder is remembered. Per browser, not per server: the choice
+ * is the user's, and a second tab opening on a different folder would be the more
+ * surprising behaviour.
+ */
+export const FOLDER_STORAGE_KEY = 'comfy-edit.imagesDir'
 
 /**
  * What a browser can decode and `createImageBitmap` will accept. Deliberately not
@@ -77,8 +92,21 @@ export function alphabetical(images: readonly LocalImage[]): LocalImage[] {
   )
 }
 
-export function localFileUrl(path: string): string {
-  return `${LOCAL_BASE}/file?${new URLSearchParams({ path })}`
+export function localFileUrl(dir: string, path: string): string {
+  return `${LOCAL_BASE}/file?${new URLSearchParams({ dir, path })}`
+}
+
+export function imagesUrl(dir: string): string {
+  return `${LOCAL_BASE}/images?${new URLSearchParams({ dir })}`
+}
+
+/**
+ * Browse a directory. With no path the server answers with the home directory —
+ * sending an empty one instead would be a request to browse "", which is not a
+ * place.
+ */
+export function dirsUrl(path?: string | null): string {
+  return path ? `${LOCAL_BASE}/dirs?${new URLSearchParams({ path })}` : `${LOCAL_BASE}/dirs`
 }
 
 /**
@@ -102,8 +130,22 @@ function isRecord(json: unknown): json is Record<string, unknown> {
   return !!json && typeof json === 'object' && !Array.isArray(json)
 }
 
+export function parseDirListing(json: unknown): DirListing {
+  if (!isRecord(json) || typeof json['path'] !== 'string' || !Array.isArray(json['dirs'])) {
+    throw new LocalFolderError('The directory listing was not in the expected form.')
+  }
+  if (json['dirs'].some((d) => typeof d !== 'string')) {
+    throw new LocalFolderError('The directory listing contained a name that was not text.')
+  }
+  return {
+    path: json['path'],
+    parent: typeof json['parent'] === 'string' ? json['parent'] : null,
+    dirs: json['dirs'] as string[],
+  }
+}
+
 export function parseLocalFolder(json: unknown): LocalFolder {
-  if (!isRecord(json) || typeof json['enabled'] !== 'boolean' || !Array.isArray(json['images'])) {
+  if (!isRecord(json) || typeof json['root'] !== 'string' || !Array.isArray(json['images'])) {
     throw new LocalFolderError('The image folder listing was not in the expected form.')
   }
 
@@ -119,8 +161,7 @@ export function parseLocalFolder(json: unknown): LocalFolder {
   })
 
   return {
-    enabled: json['enabled'],
-    root: typeof json['root'] === 'string' ? json['root'] : null,
+    root: json['root'],
     truncated: json['truncated'] === true,
     images,
   }
