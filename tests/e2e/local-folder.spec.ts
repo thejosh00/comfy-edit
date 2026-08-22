@@ -35,6 +35,10 @@ async function chooseFolder(page: Page, dir = GALLERY) {
   await openChooser(page)
   await page.getByTestId(T.dirChooserPath).fill(dir)
   await page.getByTestId(T.dirChooserPath).press('Enter')
+  // Asserted explicitly: "Use" being enabled for some *other* folder is exactly
+  // the bug this guards, and adopting it silently would send the rest of the test
+  // somewhere nobody asked for.
+  await expect(page.getByTestId(T.dirChooserPath)).toHaveValue(dir)
   await expect(page.getByTestId(T.dirChooserUse)).toBeEnabled()
   await page.getByTestId(T.dirChooserUse).click()
   await expect(page.getByTestId(T.folderPicker)).toBeVisible()
@@ -112,6 +116,31 @@ test.describe('choosing a folder', () => {
 
     await expect(page.getByTestId(T.dirChooserError)).toBeVisible()
     // And the folder cannot be adopted, because the server never confirmed it.
+    await expect(page.getByTestId(T.dirChooserUse)).toBeDisabled()
+  })
+
+  /**
+   * The chooser opens on a folder and lists it. If that listing lands after the
+   * user has started typing somewhere else, it must not write itself back into
+   * the field — otherwise "Use this folder" adopts the folder the chooser
+   * happened to open on, which is the user's home directory, and the picker then
+   * walks all of it.
+   */
+  test('a listing that lands late does not overwrite what is being typed', async ({ page }) => {
+    // Held back so the initial listing is guaranteed to arrive after the typing.
+    await page.route('**/local/dirs*', async (route) => {
+      await new Promise((r) => setTimeout(r, 800))
+      await route.continue()
+    })
+
+    await page.getByTestId(T.btnOpenFolder).click()
+    await page.getByTestId(T.dirChooserPath).fill(GALLERY)
+
+    // Let the held-back listing land.
+    await expect(page.getByTestId(T.dirChooserEntry).first()).toBeVisible()
+
+    await expect(page.getByTestId(T.dirChooserPath)).toHaveValue(GALLERY)
+    // And it still cannot be adopted, because the server has not resolved it yet.
     await expect(page.getByTestId(T.dirChooserUse)).toBeDisabled()
   })
 

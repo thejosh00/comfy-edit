@@ -29,6 +29,11 @@ import {
   type LoraSelection,
 } from '../core/loras'
 import {
+  defaultSaveName,
+  prepareSaveName,
+  SAVE_FOLDER_STORAGE_KEY,
+} from '../core/saveImage'
+import {
   FOLDER_STORAGE_KEY,
   LocalFolderError,
   type DirListing,
@@ -40,6 +45,7 @@ import {
   fetchLocalImage,
   listLocalImages,
   loadConfig,
+  saveLocalImage,
   type LoadedWorkflow,
 } from '../comfy/client'
 import { runWorkflow, DEFAULT_RUN_TIMEOUT_MS } from '../comfy/runner'
@@ -80,6 +86,19 @@ export type EditorState = {
 
   folder: FolderState
   chooser: ChooserState
+  save: SaveState
+}
+
+/** Writing the current image back out to a chosen folder. */
+export type SaveState = {
+  open: boolean
+  /** Absolute path of the chosen save folder; null until one has been chosen. */
+  dir: string | null
+  name: string
+  saving: boolean
+  error: string | null
+  /** The full path of the last successful save, for the confirmation line. */
+  savedPath: string | null
 }
 
 /** The chosen folder of images on the server, and its contents. */
@@ -96,9 +115,16 @@ export type FolderState = {
 /** The folder chooser: one rung of the server's filesystem at a time. */
 export type ChooserState = {
   open: boolean
+  /** Which folder is being chosen — the one images are opened from, or saved to. */
+  target: 'images' | 'save'
   listing: DirListing | null
   /** The editable path field, which is not always a folder that exists yet. */
   path: string
+  /**
+   * True once the field has been typed into and not yet browsed to. A listing that
+   * lands after that must not overwrite what the user is in the middle of typing.
+   */
+  pathDirty: boolean
   loading: boolean
   error: string | null
 }
@@ -145,7 +171,15 @@ type Action =
   | { type: 'folderOpened' }
   | { type: 'folderClosed' }
   | { type: 'folderChosen'; dir: string }
-  | { type: 'chooserOpened'; path: string }
+  | { type: 'saveFolderChosen'; dir: string; name: string }
+  | { type: 'saveOpened'; name: string }
+  | { type: 'saveClosed' }
+  | { type: 'saveNameEdited'; name: string }
+  | { type: 'saveStarted' }
+  | { type: 'saveFailed'; message: string }
+  | { type: 'saveDone'; path: string }
+  | { type: 'chooserOpened'; path: string; target: 'images' | 'save' }
+  | { type: 'chooserRequested' }
   | { type: 'chooserClosed' }
   | { type: 'chooserListed'; listing: DirListing }
   | { type: 'chooserError'; message: string }
@@ -181,7 +215,16 @@ const INITIAL: EditorState = {
     loading: false,
     error: null,
   },
-  chooser: { open: false, listing: null, path: '', loading: false, error: null },
+  chooser: {
+    open: false,
+    target: 'images',
+    listing: null,
+    path: '',
+    pathDirty: false,
+    loading: false,
+    error: null,
+  },
+  save: { open: false, dir: null, name: '', saving: false, error: null, savedPath: null },
 }
 
 /**
@@ -191,7 +234,12 @@ const INITIAL: EditorState = {
  */
 function withStoredDir(initial: EditorState): EditorState {
   const dir = localStorage.getItem(FOLDER_STORAGE_KEY)
-  return dir ? { ...initial, folder: { ...initial.folder, dir } } : initial
+  const saveDir = localStorage.getItem(SAVE_FOLDER_STORAGE_KEY)
+  return {
+    ...initial,
+    folder: { ...initial.folder, dir: dir ?? null },
+    save: { ...initial.save, dir: saveDir ?? null },
+  }
 }
 
 /** How many LoRA slots a workflow declares — zero when it declares none. */
@@ -333,12 +381,47 @@ function reducer(state: EditorState, action: Action): EditorState {
         folder: { ...state.folder, dir: action.dir, images: [], truncated: false, open: true, loading: true, error: null },
         chooser: { ...state.chooser, open: false },
       }
+    case 'saveFolderChosen':
+      return {
+        ...state,
+        chooser: { ...state.chooser, open: false },
+        save: { ...state.save, dir: action.dir, name: action.name, open: true, error: null, savedPath: null },
+      }
+    case 'saveOpened':
+      return { ...state, save: { ...state.save, open: true, name: action.name, error: null, savedPath: null } }
+    case 'saveClosed':
+      return { ...state, save: { ...state.save, open: false } }
+    case 'saveNameEdited':
+      // Clearing the error as soon as the name changes: the old complaint was
+      // about the old name, and leaving it up reads as though it still applies.
+      return { ...state, save: { ...state.save, name: action.name, error: null } }
+    case 'saveStarted':
+      return { ...state, save: { ...state.save, saving: true, error: null, savedPath: null } }
+    case 'saveFailed':
+      return { ...state, save: { ...state.save, saving: false, error: action.message } }
+    case 'saveDone':
+      return { ...state, save: { ...state.save, saving: false, open: false, savedPath: action.path } }
     case 'chooserOpened':
       return {
         ...state,
         folder: { ...state.folder, open: false },
-        chooser: { open: true, listing: null, path: action.path, loading: true, error: null },
+        // The save dialog steps aside while its folder is being chosen, and is
+        // brought back by saveFolderChosen.
+        save: { ...state.save, open: false },
+        chooser: {
+          open: true,
+          target: action.target,
+          listing: null,
+          path: action.path,
+          pathDirty: false,
+          loading: true,
+          error: null,
+        },
       }
+    case 'chooserRequested':
+      // The field and the browse now agree again, so the listing about to land is
+      // allowed to write the canonical path back into it.
+      return { ...state, chooser: { ...state.chooser, pathDirty: false, loading: true } }
     case 'chooserClosed':
       return { ...state, chooser: { ...state.chooser, open: false } }
     case 'chooserListed':
@@ -348,8 +431,11 @@ function reducer(state: EditorState, action: Action): EditorState {
           ...state.chooser,
           listing: action.listing,
           // Snapped to what the server resolved, so the field shows a real,
-          // canonical path rather than whatever was typed to get there.
-          path: action.listing.path,
+          // canonical path rather than whatever was typed to get there — unless
+          // the user has since typed something else, which must not be clobbered
+          // by a listing they did not ask for. That mistake is how the chooser
+          // ends up adopting the folder it happened to open on.
+          path: state.chooser.pathDirty ? state.chooser.path : action.listing.path,
           loading: false,
           error: null,
         },
@@ -357,7 +443,7 @@ function reducer(state: EditorState, action: Action): EditorState {
     case 'chooserError':
       return { ...state, chooser: { ...state.chooser, loading: false, error: action.message } }
     case 'chooserPathEdited':
-      return { ...state, chooser: { ...state.chooser, path: action.path } }
+      return { ...state, chooser: { ...state.chooser, path: action.path, pathDirty: true } }
   }
 }
 
@@ -425,6 +511,7 @@ export function useEditor() {
   /** Move the chooser to a directory. No path means the server's home directory. */
   const browseTo = useCallback(async (path?: string | null): Promise<void> => {
     const seq = ++chooserSeq.current
+    dispatch({ type: 'chooserRequested' })
     try {
       const listing = await browseDirs(path)
       if (seq === chooserSeq.current) dispatch({ type: 'chooserListed', listing })
@@ -505,12 +592,15 @@ export function useEditor() {
     [adoptImage, state.folder.dir],
   )
 
-  /** Browse from the chosen folder if there is one, otherwise from home. */
-  const openChooser = useCallback(() => {
-    const from = state.folder.dir
-    dispatch({ type: 'chooserOpened', path: from ?? '' })
-    void browseTo(from)
-  }, [browseTo, state.folder.dir])
+  /** Browse from the folder already chosen for this purpose, otherwise from home. */
+  const openChooser = useCallback(
+    (target: 'images' | 'save' = 'images') => {
+      const from = target === 'save' ? state.save.dir : state.folder.dir
+      dispatch({ type: 'chooserOpened', target, path: from ?? '' })
+      void browseTo(from)
+    },
+    [browseTo, state.folder.dir, state.save.dir],
+  )
 
   /**
    * "Open from folder…" goes straight to the chooser until a folder has been
@@ -529,13 +619,67 @@ export function useEditor() {
     void refreshFolder(dir)
   }, [openChooser, refreshFolder, state.folder.dir])
 
+  /** The current image's history entry, which is what a default filename describes. */
+  const currentEntry = state.history.entries.find((e) => e.id === state.history.currentId)
+
   const chooseFolder = useCallback(
     (dir: string) => {
+      if (state.chooser.target === 'save') {
+        localStorage.setItem(SAVE_FOLDER_STORAGE_KEY, dir)
+        // Straight back to the filename prompt, which is where the user was going.
+        dispatch({
+          type: 'saveFolderChosen',
+          dir,
+          name: currentEntry ? defaultSaveName(currentEntry.origin) : 'image.png',
+        })
+        return
+      }
       localStorage.setItem(FOLDER_STORAGE_KEY, dir)
       dispatch({ type: 'folderChosen', dir })
       void refreshFolder(dir)
     },
-    [refreshFolder],
+    [currentEntry, refreshFolder, state.chooser.target],
+  )
+
+  /**
+   * Ask for a filename, choosing a folder first if there is not one yet. The image
+   * saved is the canvas as it stands — a generated result with nothing drawn on it
+   * yet is exactly the generated result, and once something has been drawn, what
+   * is on screen is what the user means by "this image".
+   */
+  const openSaveDialog = useCallback(() => {
+    if (!state.base || !currentEntry) return
+    if (!state.save.dir) {
+      openChooser('save')
+      return
+    }
+    dispatch({ type: 'saveOpened', name: defaultSaveName(currentEntry.origin) })
+  }, [currentEntry, openChooser, state.base, state.save.dir])
+
+  const saveImage = useCallback(
+    async (getBlob: () => Promise<Blob>): Promise<string | null> => {
+      const dir = state.save.dir
+      if (!dir) return null
+
+      const prepared = prepareSaveName(state.save.name)
+      if (!prepared.ok) {
+        dispatch({ type: 'saveFailed', message: prepared.reason })
+        return null
+      }
+
+      dispatch({ type: 'saveStarted' })
+      try {
+        const path = await saveLocalImage(dir, prepared.name, await getBlob())
+        dispatch({ type: 'saveDone', path })
+        return path
+      } catch (e) {
+        // The dialog stays open carrying the reason — "already exists" is a
+        // prompt to pick another name, not a dead end.
+        dispatch({ type: 'saveFailed', message: message(e, 'Could not save the image.') })
+        return null
+      }
+    },
+    [state.save.dir, state.save.name],
   )
 
   const selectHistoryEntry = useCallback((id: string) => {
@@ -678,6 +822,12 @@ export function useEditor() {
     openChooser,
     chooseFolder,
     browseTo,
+    openSaveDialog,
+    saveImage,
+    canSave: !!state.base,
+    changeSaveFolder: useCallback(() => openChooser('save'), [openChooser]),
+    closeSaveDialog: useCallback(() => dispatch({ type: 'saveClosed' }), []),
+    editSaveName: useCallback((name: string) => dispatch({ type: 'saveNameEdited', name }), []),
     closeFolderPicker: useCallback(() => dispatch({ type: 'folderClosed' }), []),
     closeChooser: useCallback(() => dispatch({ type: 'chooserClosed' }), []),
     editChooserPath: useCallback((path: string) => dispatch({ type: 'chooserPathEdited', path }), []),

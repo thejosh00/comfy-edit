@@ -11,9 +11,9 @@
  * a folder image would load and then be impossible to draw on or transform.
  */
 import { createReadStream } from 'node:fs'
-import { lstat, readdir, stat } from 'node:fs/promises'
+import { lstat, readdir, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Connect, Plugin } from 'vite'
 import {
   alphabetical,
@@ -148,6 +148,29 @@ export async function listImages(
 }
 
 /**
+ * Where a save should be written, or null if the request does not name a file
+ * directly inside `dir`. The name arrives as a query parameter, so this is what
+ * keeps a save inside the folder the user chose rather than anywhere on the disk.
+ *
+ * Stricter than resolveWithinRoot: no subdirectories, since the dialog asks for a
+ * filename and a path would write somewhere the user did not choose.
+ */
+export function resolveSaveTarget(dir: string, name: string): string | null {
+  if (!dir || !isAbsolute(dir) || dir.includes('\0')) return null
+  if (!name || name.includes('\0')) return null
+  if (name.includes('/') || name.includes('\\')) return null
+  if (name === '.' || name === '..') return null
+  if (extname(name).toLowerCase() !== '.png') return null
+  if (name.length === '.png'.length) return null
+
+  const abs = resolve(dir, name)
+  // Belt and braces: after all of the above, the result must still sit directly
+  // inside the folder.
+  if (dirname(abs) !== resolve(dir)) return null
+  return abs
+}
+
+/**
  * The absolute path `rel` names inside `root`, or null if it names anything else.
  *
  * The path arrives as a query parameter, so this is the only thing standing
@@ -182,12 +205,40 @@ function notFound(res: import('node:http').ServerResponse): void {
   res.end('Not found')
 }
 
+function fail(res: import('node:http').ServerResponse, status: number, reason: string): void {
+  res.statusCode = status
+  res.setHeader('Content-Type', 'application/json')
+  res.end(JSON.stringify({ reason }))
+}
+
+/** A generous ceiling for one image, and a bound on what a stray POST can buffer. */
+const MAX_SAVE_BYTES = 64 * 1024 * 1024
+
+function readBody(req: import('node:http').IncomingMessage): Promise<Buffer | null> {
+  return new Promise((resolve_) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > MAX_SAVE_BYTES) {
+        req.destroy()
+        resolve_(null)
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => resolve_(Buffer.concat(chunks)))
+    req.on('error', () => resolve_(null))
+  })
+}
+
 /**
  * Mounts the three routes behind the folder chooser:
  *
- *   /local/dirs?path=   the subdirectories of one directory, for browsing
- *   /local/images?dir=  every image under a chosen directory
+ *   /local/dirs?path=       the subdirectories of one directory, for browsing
+ *   /local/images?dir=      every image under a chosen directory
  *   /local/file?dir=&path=  one of those images
+ *   /local/save?dir=&name=  POST, writes one image into a chosen directory
  *
  * The directory is chosen in the app and travels with each request, so nothing
  * here holds mutable state and two tabs can sit in different folders.
@@ -210,6 +261,41 @@ export function localFolderPlugin(): Plugin {
           return
         }
         sendJson(res, listing)
+      })
+      return
+    }
+
+    if (url.pathname === `${LOCAL_BASE}/save`) {
+      if (req.method !== 'POST') {
+        fail(res, 405, 'Saving is a POST.')
+        return
+      }
+      const target = resolveSaveTarget(
+        url.searchParams.get('dir') ?? '',
+        url.searchParams.get('name') ?? '',
+      )
+      if (!target) {
+        fail(res, 400, 'That is not a filename that can be saved to this folder.')
+        return
+      }
+      void readBody(req).then(async (body) => {
+        if (!body?.length) {
+          fail(res, 400, 'The image was empty.')
+          return
+        }
+        try {
+          // 'wx' fails rather than overwrites. Replacing a file the user did not
+          // mean to name is the one mistake here that cannot be undone.
+          await writeFile(target, body, { flag: 'wx' })
+          sendJson(res, { path: target })
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code
+          if (code === 'EEXIST') {
+            fail(res, 409, `"${basename(target)}" already exists in that folder.`)
+            return
+          }
+          fail(res, 500, `Could not write the file (${code ?? 'unknown error'}).`)
+        }
       })
       return
     }

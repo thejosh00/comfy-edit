@@ -43,6 +43,17 @@ export const T = {
   dirChooserError: 'dir-chooser-error',
   dirChooserClose: 'dir-chooser-close',
 
+  // Save
+  btnSaveImage: 'btn-save-image',
+  saveDialog: 'save-dialog',
+  saveDialogName: 'save-dialog-name',
+  saveDialogFolder: 'save-dialog-folder',
+  saveDialogChangeFolder: 'save-dialog-change-folder',
+  saveDialogSave: 'save-dialog-save',
+  saveDialogError: 'save-dialog-error',
+  saveDialogClose: 'save-dialog-close',
+  saveConfirmation: 'save-confirmation',
+
   // Transform panel
   workflowSelect: 'workflow-select',
   workflowError: 'workflow-error',

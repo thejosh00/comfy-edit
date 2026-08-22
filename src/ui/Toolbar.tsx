@@ -23,6 +23,8 @@ type Props = {
   onClear: () => void
   onPickFile: () => void
   onPickFolder: () => void
+  onSave: () => void
+  canSave: boolean
   sizeLabel: string
 }
 
@@ -33,6 +35,10 @@ export function Toolbar(props: Props) {
 
       <button data-testid={T.btnOpenFolder} onClick={props.onPickFolder}>
         Open from folder…
+      </button>
+
+      <button data-testid={T.btnSaveImage} disabled={!props.canSave} onClick={props.onSave}>
+        Save image…
       </button>
 
       <span className="status">|</span>

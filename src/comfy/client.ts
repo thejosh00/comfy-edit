@@ -16,6 +16,7 @@ import {
   type DirListing,
   type LocalFolder,
 } from '../core/localImages'
+import { saveUrl } from '../core/saveImage'
 import type { OutputImageRef } from '../core/comfyEvents'
 
 /**
@@ -116,6 +117,20 @@ export async function fetchLocalImage(dir: string, path: string): Promise<Blob> 
     throw new LocalFolderError(`Could not read "${path}" from the image folder (${res.status}).`)
   }
   return res.blob()
+}
+
+/**
+ * Write one image into a chosen folder. The server refuses to overwrite, and the
+ * reason it gives is surfaced verbatim — "already exists" is the one the user
+ * needs to act on.
+ */
+export async function saveLocalImage(dir: string, name: string, blob: Blob): Promise<string> {
+  const res = await fetch(saveUrl(dir, name), { method: 'POST', body: blob })
+  const body = (await res.json().catch(() => null)) as { path?: string; reason?: string } | null
+  if (!res.ok || !body?.path) {
+    throw new LocalFolderError(body?.reason ?? `Could not save the image (${res.status}).`)
+  }
+  return body.path
 }
 
 /** One rung of the folder chooser. No path asks for the home directory. */

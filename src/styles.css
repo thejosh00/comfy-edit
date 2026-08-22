@@ -272,6 +272,13 @@ button[data-selected="true"] {
   word-break: break-word;
 }
 
+/* The default banner is the quiet one — a save confirmation, not a problem. */
+.banner {
+  background: #23282e;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
 .banner.error {
   background: #40232a;
   border: 1px solid var(--danger);

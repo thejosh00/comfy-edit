@@ -2,7 +2,13 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { utimesSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { listDirs, listImages, resolveWithinRoot, contentTypeFor } from '../../src/server/localFolder'
+import {
+  listDirs,
+  listImages,
+  resolveSaveTarget,
+  resolveWithinRoot,
+  contentTypeFor,
+} from '../../src/server/localFolder'
 
 const GALLERY = fileURLToPath(new URL('../fixtures/gallery', import.meta.url))
 const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url))
@@ -167,6 +173,29 @@ describe('resolveWithinRoot', () => {
     // The listing never offers it, so a request for one is either a mistake or
     // someone probing. Either way the folder is an image source, not a fileserver.
     expect(resolveWithinRoot(GALLERY, 'notes.txt')).toBeNull()
+  })
+})
+
+describe('resolveSaveTarget', () => {
+  it('resolves a plain name inside the folder', () => {
+    expect(resolveSaveTarget(GALLERY, 'saved.png')).toBe(resolve(GALLERY, 'saved.png'))
+  })
+
+  // The name arrives as a query parameter, so this is what keeps a save inside
+  // the folder the user chose rather than anywhere on the disk.
+  it.each(['../escape.png', 'nested/inside.png', '/tmp/escape.png', '..', '', 'a\0.png'])(
+    'refuses %s',
+    (name) => {
+      expect(resolveSaveTarget(GALLERY, name)).toBeNull()
+    },
+  )
+
+  it('refuses a non-png name, matching what the client is allowed to ask for', () => {
+    expect(resolveSaveTarget(GALLERY, 'saved.jpg')).toBeNull()
+  })
+
+  it('refuses a relative folder, which would resolve against the server cwd', () => {
+    expect(resolveSaveTarget('tests/fixtures/gallery', 'saved.png')).toBeNull()
   })
 })
 

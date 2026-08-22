@@ -95,11 +95,26 @@ Details:
 - Skips dot-directories, non-images, and symlinks. `/local/file` refuses any path that resolves
   outside the chosen folder, so the route is an image source and not a fileserver.
 
+## Save an image back out
+
+**Save image…** writes what is on the canvas into a folder you choose. The first use opens the same
+chooser; after that it goes straight to the filename prompt. The save folder is remembered separately
+from the folder images are opened from (`comfy-edit.saveDir`) — the two are rarely the same place.
+
+- The filename defaults to `<workflow>-<seed>.png`, which says something about the image and differs
+  between saves, so "that name is taken" stays off the common path.
+- A name with no extension gets `.png`. Any other image extension is refused: the canvas exports PNG,
+  and a `.jpg` holding PNG bytes is a slow way to find that out.
+- Saving never overwrites — `POST /local/save` opens with `wx` and answers 409 if the name exists.
+  The dialog stays open carrying the reason so another name can be typed.
+- The image saved is the canvas as it stands. For a freshly generated result that is exactly the
+  generated image; once something has been drawn on it, it is what is on screen.
+
 ### What this exposes
 
 The chosen folder travels with each request rather than being fixed at startup, which means any
-directory the dev server's user can read is browsable, and any image under a chosen one is readable,
-by anything that can reach the port. That is the same trust boundary `/comfy/*` already assumes — a
+directory the dev server's user can read is browsable, any image under a chosen one is readable, and
+a PNG can be written into any directory it can write to — by anything that can reach the port. That is the same trust boundary `/comfy/*` already assumes — a
 dev server on the loopback interface — but it is wider than a single configured root. Don't run the
 dev server on a public interface.
 

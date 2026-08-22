@@ -5,6 +5,7 @@ import { TransformPanel } from './ui/TransformPanel'
 import { HistoryStrip } from './ui/HistoryStrip'
 import { FolderPicker } from './ui/FolderPicker'
 import { DirectoryChooser } from './ui/DirectoryChooser'
+import { SaveDialog } from './ui/SaveDialog'
 import { useEditor } from './ui/useEditor'
 import { T } from './testids'
 
@@ -72,6 +73,8 @@ export function App() {
         onClear={editor.clear}
         onPickFile={() => fileRef.current?.click()}
         onPickFolder={editor.openFolderPicker}
+        onSave={editor.openSaveDialog}
+        canSave={editor.canSave}
         sizeLabel={sizeLabel}
       />
 
@@ -130,6 +133,22 @@ export function App() {
           onChoose={editor.chooseFolder}
           onClose={editor.closeChooser}
         />
+      )}
+
+      {state.save.open && (
+        <SaveDialog
+          save={state.save}
+          onName={editor.editSaveName}
+          onChangeFolder={editor.changeSaveFolder}
+          onSave={() => void editor.saveImage(getCanvasBlob)}
+          onClose={editor.closeSaveDialog}
+        />
+      )}
+
+      {state.save.savedPath && (
+        <div className="banner" data-testid={T.saveConfirmation}>
+          Saved to {state.save.savedPath}
+        </div>
       )}
 
       {state.loadError && (
