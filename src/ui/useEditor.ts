@@ -578,8 +578,10 @@ export function useEditor() {
     async (path: string): Promise<BaseImage | null> => {
       const dir = state.folder.dir
       if (!dir) return null
+      const version = state.folder.images.find((i) => i.path === path)?.mtime
       try {
-        const base = await adoptImage(await fetchLocalImage(dir, path), { kind: 'upload' }, false)
+        const blob = await fetchLocalImage(dir, path, version)
+        const base = await adoptImage(blob, { kind: 'upload' }, false)
         dispatch({ type: 'folderClosed' })
         return base
       } catch {
@@ -589,7 +591,7 @@ export function useEditor() {
         return null
       }
     },
-    [adoptImage, state.folder.dir],
+    [adoptImage, state.folder.dir, state.folder.images],
   )
 
   /** Browse from the folder already chosen for this purpose, otherwise from home. */

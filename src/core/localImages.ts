@@ -92,8 +92,29 @@ export function alphabetical(images: readonly LocalImage[]): LocalImage[] {
   )
 }
 
-export function localFileUrl(dir: string, path: string): string {
-  return `${LOCAL_BASE}/file?${new URLSearchParams({ dir, path })}`
+/**
+ * `version` is the file's mtime. The folder is live, so these URLs cannot simply
+ * be cached forever — but keyed on mtime, an unchanged file is never re-fetched
+ * and a changed one gets a URL the cache has never seen. No revalidation round
+ * trip in either case, which is what makes reopening the picker free.
+ */
+function versioned(route: string, params: Record<string, string>, version?: number): string {
+  const query = new URLSearchParams(params)
+  if (version !== undefined) query.set('v', String(version))
+  return `${LOCAL_BASE}/${route}?${query}`
+}
+
+export function localFileUrl(dir: string, path: string, version?: number): string {
+  return versioned('file', { dir, path }, version)
+}
+
+/**
+ * A tile-sized version of one image. Tiles render at ~73px, so sending the full
+ * file — routinely 2.5MB for a render — is hundreds of megabytes for a folder
+ * that shows as a few hundred kilobytes of thumbnails.
+ */
+export function thumbUrl(dir: string, path: string, version?: number): string {
+  return versioned('thumb', { dir, path }, version)
 }
 
 export function imagesUrl(dir: string): string {

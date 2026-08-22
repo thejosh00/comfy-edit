@@ -111,8 +111,8 @@ export async function listLocalImages(dir: string): Promise<LocalFolder> {
   return parseLocalFolder(await res.json())
 }
 
-export async function fetchLocalImage(dir: string, path: string): Promise<Blob> {
-  const res = await fetch(localFileUrl(dir, path))
+export async function fetchLocalImage(dir: string, path: string, version?: number): Promise<Blob> {
+  const res = await fetch(localFileUrl(dir, path, version))
   if (!res.ok) {
     throw new LocalFolderError(`Could not read "${path}" from the image folder (${res.status}).`)
   }

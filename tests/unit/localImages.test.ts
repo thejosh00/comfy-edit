@@ -10,6 +10,7 @@ import {
   newestFirst,
   parseDirListing,
   parseLocalFolder,
+  thumbUrl,
   LocalFolderError,
   type LocalImage,
 } from '../../src/core/localImages'
@@ -133,6 +134,26 @@ describe('localFileUrl', () => {
     const parsed = new URL(url, 'http://x')
     expect(parsed.searchParams.get('dir')).toBe('/srv/my images')
     expect(parsed.searchParams.get('path')).toBe('holiday snaps/a&b.png')
+  })
+})
+
+describe('versioned urls', () => {
+  // The folder is live, so the URL cannot simply be cached forever. Keying it on
+  // the file's mtime means an unchanged file is never re-fetched and a changed one
+  // gets a URL the cache has never seen — no revalidation round trip either way.
+  it('carries the version when one is given', () => {
+    expect(new URL(localFileUrl('/d', 'a.png', 1234), 'http://x').searchParams.get('v')).toBe('1234')
+    expect(new URL(thumbUrl('/d', 'a.png', 1234), 'http://x').searchParams.get('v')).toBe('1234')
+  })
+
+  it('omits it when there is none, rather than sending v=undefined', () => {
+    expect(localFileUrl('/d', 'a.png')).not.toContain('v=')
+    expect(thumbUrl('/d', 'a.png')).not.toContain('v=')
+  })
+
+  it('points the thumbnail at its own route, so tiles and full images differ', () => {
+    expect(new URL(thumbUrl('/d', 'a.png'), 'http://x').pathname).toBe('/local/thumb')
+    expect(new URL(localFileUrl('/d', 'a.png'), 'http://x').pathname).toBe('/local/file')
   })
 })
 

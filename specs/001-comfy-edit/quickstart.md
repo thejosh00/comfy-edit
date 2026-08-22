@@ -92,6 +92,13 @@ Details:
 - Recurses up to 6 levels and lists alphabetically, numerically within a name (`render-2` before
   `render-10`). Capped at 500 images — by recency, so a big folder keeps the newest rather than the
   first 500 names — and gives up walking after 5000. Either cap is reported in the picker.
+- Tiles are served from `/local/thumb` as 160px WebP, resized by `sharp`. Sending full renders for
+  73px tiles cost 546MB and 9s to open a 500-image folder; measured after, 0.2MB and 1.5s.
+- Every image URL carries the file's mtime as `v=`, and a versioned response is `immutable`. So a
+  folder opens once and is free after that — reopening or reloading transfers nothing. A file that
+  changes gets a new mtime, so a new URL, so it is refetched.
+- `sharp` is a native module and the one dependency that can fail to build. It is imported lazily and
+  its absence falls back to serving the original file: the picker is slow again, not broken.
 - Skips dot-directories, non-images, and symlinks. `/local/file` refuses any path that resolves
   outside the chosen folder, so the route is an image source and not a fileserver.
 

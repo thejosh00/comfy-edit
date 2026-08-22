@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { T } from '../../src/testids'
-import { solidPng } from '../fake-comfy/png.mjs'
+import { encodePng, solidPng } from '../fake-comfy/png.mjs'
 import { canvasHash, centerPixel, resetFake, runTransformFlow } from './helpers'
 
 /**
@@ -317,6 +317,78 @@ test.describe('a hundred images fit on a 1080p screen', () => {
     await expect(nested).toHaveText('green.png')
     await expect(nested).toHaveAttribute('title', 'nested/green.png')
     await expect(nested.locator('img')).toHaveAttribute('alt', 'nested/green.png')
+  })
+})
+
+/**
+ * Tiles render at ~73px. Sending the full file for each one is what made a folder
+ * of renders take seconds and hundreds of megabytes to open, so the grid asks for
+ * a thumbnail instead, and both routes carry the file's mtime so nothing is ever
+ * fetched twice.
+ */
+test.describe('thumbnails', () => {
+  const THUMBS = fileURLToPath(new URL('../fixtures/thumbs', import.meta.url))
+  const BIG = `${THUMBS}/big.png`
+
+  test.beforeAll(() => {
+    mkdirSync(THUMBS, { recursive: true })
+    // Noisy, so it does not compress to nothing and the size comparison means
+    // something. Roughly the shape of a real render.
+    let s = 7
+    const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    writeFileSync(
+      BIG,
+      encodePng(512, 512, (x, y) => [(x + (rnd() * 60) | 0) % 256, (y * 2) % 256, 90, 255]),
+    )
+  })
+
+  test.afterAll(() => {
+    rmSync(THUMBS, { recursive: true, force: true })
+  })
+
+  test('the grid asks for thumbnails, not full images', async ({ page, request }) => {
+    await resetFake(request)
+    await page.goto('/')
+    await chooseFolder(page, THUMBS)
+
+    const src = await page
+      .locator(`[data-testid="${T.folderPickerItem}"][data-path="big.png"] img`)
+      .getAttribute('src')
+    expect(src).toContain('/local/thumb')
+    // Versioned by mtime, which is what lets the response be cached forever.
+    expect(src).toMatch(/[?&]v=\d+/)
+  })
+
+  test('a thumbnail is a small fraction of the original', async ({ request }) => {
+    const original = readFileSync(BIG)
+    const res = await request.get(
+      `/local/thumb?dir=${encodeURIComponent(THUMBS)}&path=big.png&v=1`,
+    )
+
+    expect(res.status()).toBe(200)
+    expect(res.headers()['content-type']).toBe('image/webp')
+    const thumb = await res.body()
+    expect(thumb.length).toBeLessThan(original.length / 4)
+  })
+
+  test('a versioned response is cached rather than re-fetched', async ({ request }) => {
+    const versioned = await request.get(
+      `/local/thumb?dir=${encodeURIComponent(THUMBS)}&path=big.png&v=1`,
+    )
+    expect(versioned.headers()['cache-control']).toContain('immutable')
+
+    // Without a version the folder is live and the answer has to be revalidated.
+    const unversioned = await request.get(
+      `/local/thumb?dir=${encodeURIComponent(THUMBS)}&path=big.png`,
+    )
+    expect(unversioned.headers()['cache-control']).toBe('no-cache')
+  })
+
+  test('refuses to escape the chosen folder, the same as the file route', async ({ request }) => {
+    const res = await request.get(
+      `/local/thumb?dir=${encodeURIComponent(THUMBS)}&path=${encodeURIComponent('../base.png')}`,
+    )
+    expect(res.status()).toBe(404)
   })
 })
 

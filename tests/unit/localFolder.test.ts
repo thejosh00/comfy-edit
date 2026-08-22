@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import {
   listDirs,
   listImages,
+  renderThumbnail,
   resolveSaveTarget,
   resolveWithinRoot,
   contentTypeFor,
@@ -173,6 +174,24 @@ describe('resolveWithinRoot', () => {
     // The listing never offers it, so a request for one is either a mistake or
     // someone probing. Either way the folder is an image source, not a fileserver.
     expect(resolveWithinRoot(GALLERY, 'notes.txt')).toBeNull()
+  })
+})
+
+describe('renderThumbnail', () => {
+  it('produces a much smaller image than the original', async () => {
+    // The point of the route: a 73px tile does not need a full render's bytes.
+    const thumb = await renderThumbnail(resolve(GALLERY, 'blue.png'), 160)
+    expect(thumb).not.toBeNull()
+    expect(thumb!.body.length).toBeGreaterThan(0)
+    expect(thumb!.contentType).toMatch(/^image\//)
+  })
+
+  it('returns null for something that is not an image, rather than throwing', async () => {
+    expect(await renderThumbnail(resolve(GALLERY, 'notes.txt'), 160)).toBeNull()
+  })
+
+  it('returns null for a file that is not there', async () => {
+    expect(await renderThumbnail(resolve(GALLERY, 'nope.png'), 160)).toBeNull()
   })
 })
 

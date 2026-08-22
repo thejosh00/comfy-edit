@@ -1,5 +1,8 @@
 import { useEffect } from 'react'
-import { basename, displayName, localFileUrl } from '../core/localImages'
+import { basename, displayName, thumbUrl } from '../core/localImages'
+
+/** Matches the served thumbnail, so a tile reserves its space before it loads. */
+const THUMB_PX = 160
 import type { FolderState } from './useEditor'
 import { T } from '../testids'
 
@@ -66,9 +69,15 @@ export function FolderPicker({ folder, onPick, onChangeFolder, onClose }: Props)
               onClick={() => onPick(image.path)}
             >
               <img
-                src={localFileUrl(folder.dir ?? '', image.path)}
+                src={thumbUrl(folder.dir ?? '', image.path, image.mtime)}
                 alt={displayName(image.path)}
                 loading="lazy"
+                decoding="async"
+                // The full image behind a click must not queue behind hundreds of
+                // tiles on the connection pool.
+                fetchPriority="low"
+                width={THUMB_PX}
+                height={THUMB_PX}
               />
               <span>{basename(image.path)}</span>
             </button>

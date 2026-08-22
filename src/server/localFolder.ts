@@ -11,7 +11,7 @@
  * a folder image would load and then be impossible to draw on or transform.
  */
 import { createReadStream } from 'node:fs'
-import { lstat, readdir, stat, writeFile } from 'node:fs/promises'
+import { lstat, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Connect, Plugin } from 'vite'
@@ -50,6 +50,57 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export function contentTypeFor(name: string): string {
   return CONTENT_TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream'
+}
+
+/** Twice the ~73px tile, so thumbnails stay sharp on a high-density display. */
+export const THUMB_SIZE = 160
+
+export type Thumbnail = { body: Buffer; contentType: string }
+
+/**
+ * sharp is a native module and the only part of this that can fail to build. It
+ * is loaded once, lazily, and its absence degrades to serving the original file
+ * rather than taking the picker down — slow, but working.
+ */
+type SharpFactory = typeof import('sharp')
+
+let sharpModule: SharpFactory | null | undefined
+async function loadSharp(): Promise<SharpFactory | null> {
+  if (sharpModule !== undefined) return sharpModule
+  let loaded: SharpFactory | null = null
+  try {
+    // sharp is CommonJS (`export =`), so which of these two holds the callable
+    // depends on how the loader interops it. Take whichever one is a function.
+    const mod = (await import('sharp')) as unknown as SharpFactory & { default?: SharpFactory }
+    loaded = typeof mod.default === 'function' ? mod.default : mod
+  } catch {
+    loaded = null
+  }
+  sharpModule = loaded
+  return loaded
+}
+
+/**
+ * A tile-sized WebP of one image, or null if it is not an image this can read.
+ * Cropped to a square because the tile renders with `object-fit: cover` — doing
+ * it here means the bytes sent are the bytes shown.
+ */
+export async function renderThumbnail(abs: string, size = THUMB_SIZE): Promise<Thumbnail | null> {
+  const sharp = await loadSharp()
+  if (!sharp) {
+    // No resizer: hand back the original so the picker still shows something.
+    const body = await readFile(abs).catch(() => null)
+    return body ? { body, contentType: contentTypeFor(abs) } : null
+  }
+  try {
+    const body = await sharp(abs, { failOn: 'error' })
+      .resize(size, size, { fit: 'cover', withoutEnlargement: true })
+      .webp({ quality: 78 })
+      .toBuffer()
+    return { body, contentType: 'image/webp' }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -205,6 +256,16 @@ function notFound(res: import('node:http').ServerResponse): void {
   res.end('Not found')
 }
 
+/**
+ * A request carrying `v` names one version of one file, so it can be cached
+ * forever — the listing hands out a new `v` when the file changes. Without one
+ * the folder is live and the answer has to be revalidated every time, which is
+ * what made reopening the picker re-download everything.
+ */
+function cacheControlFor(url: URL): string {
+  return url.searchParams.has('v') ? 'public, max-age=31536000, immutable' : 'no-cache'
+}
+
 function fail(res: import('node:http').ServerResponse, status: number, reason: string): void {
   res.statusCode = status
   res.setHeader('Content-Type', 'application/json')
@@ -313,6 +374,30 @@ export function localFolderPlugin(): Plugin {
       return
     }
 
+    if (url.pathname === `${LOCAL_BASE}/thumb`) {
+      const dir = url.searchParams.get('dir') ?? ''
+      const abs =
+        isAbsolute(dir) && !dir.includes('\0')
+          ? resolveWithinRoot(dir, url.searchParams.get('path') ?? '')
+          : null
+      if (!abs) {
+        notFound(res)
+        return
+      }
+      void renderThumbnail(abs).then((thumb) => {
+        if (!thumb) {
+          notFound(res)
+          return
+        }
+        res.statusCode = 200
+        res.setHeader('Content-Type', thumb.contentType)
+        res.setHeader('Content-Length', String(thumb.body.length))
+        res.setHeader('Cache-Control', cacheControlFor(url))
+        res.end(thumb.body)
+      })
+      return
+    }
+
     if (url.pathname === `${LOCAL_BASE}/file`) {
       const dir = url.searchParams.get('dir') ?? ''
       // The traversal guard still earns its keep: it is what keeps a chosen
@@ -336,8 +421,7 @@ export function localFolderPlugin(): Plugin {
           res.statusCode = 200
           res.setHeader('Content-Type', contentTypeFor(abs))
           res.setHeader('Content-Length', String(info.size))
-          // The folder is live: a file can be replaced while the app is open.
-          res.setHeader('Cache-Control', 'no-cache')
+          res.setHeader('Cache-Control', cacheControlFor(url))
           createReadStream(abs).pipe(res)
         },
         () => notFound(res),
