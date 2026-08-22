@@ -83,7 +83,9 @@ uploads the composited canvas rather than referring to a path on the server. Det
 
 - Served by `src/server/localFolder.ts`, a Vite middleware mounted at `/local/*` in both `dev` and
   `preview`. Same-origin for the same reason `/comfy/*` is: a cross-origin image taints the canvas.
-- Recurses up to 6 levels, newest first, capped at 500 images — the picker says when it capped.
+- Recurses up to 6 levels and lists alphabetically, numerically within a name (`render-2` before
+  `render-10`). Capped at 500 images — by recency, so a big folder keeps the newest rather than the
+  first 500 names, and the picker says when it capped.
 - Skips dot-directories, non-images, and symlinks. `/local/file` refuses any path that resolves
   outside the root, so the route is an image source and not a fileserver.
 - Unset `IMAGES_DIR` and the button is simply absent.

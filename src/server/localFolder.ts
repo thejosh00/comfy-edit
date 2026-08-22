@@ -14,7 +14,13 @@ import { createReadStream } from 'node:fs'
 import { lstat, readdir, stat } from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Connect, Plugin } from 'vite'
-import { isImageFilename, newestFirst, LOCAL_BASE, type LocalImage } from '../core/localImages'
+import {
+  alphabetical,
+  isImageFilename,
+  newestFirst,
+  LOCAL_BASE,
+  type LocalImage,
+} from '../core/localImages'
 
 /** Enough for a working folder; a picker showing thousands is not usable anyway. */
 const DEFAULT_LIMIT = 500
@@ -39,9 +45,9 @@ export function contentTypeFor(name: string): string {
 export type Listing = { images: LocalImage[]; truncated: boolean }
 
 /**
- * Every image under `root`, newest first. A root that does not exist lists as
- * empty rather than throwing: a typo in IMAGES_DIR should leave the rest of the
- * app working, not take the dev server down at startup.
+ * Every image under `root`, in alphabetical order. A root that does not exist
+ * lists as empty rather than throwing: a typo in IMAGES_DIR should leave the rest
+ * of the app working, not take the dev server down at startup.
  */
 export async function listImages(
   root: string,
@@ -81,10 +87,12 @@ export async function listImages(
 
   await walk(rootAbs, '', 0)
 
-  // Sort before capping, so the cap keeps the newest images rather than whichever
-  // ones the walk happened to reach first.
-  const sorted = newestFirst(found)
-  return { images: sorted.slice(0, limit), truncated: sorted.length > limit }
+  // Two different orders doing two different jobs. The cap is applied by recency,
+  // because in a folder of renders the newest are the ones being worked on and
+  // capping A-Z would keep the oldest half. What comes back is then sorted for
+  // reading, which is what the picker shows.
+  const kept = newestFirst(found).slice(0, limit)
+  return { images: alphabetical(kept), truncated: found.length > limit }
 }
 
 /**

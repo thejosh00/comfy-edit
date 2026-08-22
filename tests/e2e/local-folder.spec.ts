@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { T } from '../../src/testids'
+import { solidPng } from '../fake-comfy/png.mjs'
 import { canvasHash, centerPixel, resetFake, runTransformFlow } from './helpers'
 
 /**
@@ -46,9 +49,7 @@ test.describe('open from a server folder', () => {
     const items = page.getByTestId(T.folderPickerItem)
     await expect(items).toHaveCount(2)
 
-    const paths = await items.evaluateAll((els) =>
-      els.map((e) => e.getAttribute('data-path')).sort(),
-    )
+    const paths = await items.evaluateAll((els) => els.map((e) => e.getAttribute('data-path')))
     expect(paths).toEqual(['blue.png', 'nested/green.png'])
 
     // Each entry is labelled with its path — with a folder of generated images,
@@ -108,6 +109,82 @@ test.describe('open from a server folder', () => {
     await page.getByTestId(T.folderPickerClose).click()
     await expect(page.getByTestId(T.folderPicker)).toHaveCount(0)
     await expect(page.getByTestId(T.canvasSize)).toHaveText('')
+  })
+})
+
+/**
+ * Density. A folder of renders is routinely a hundred files, and a picker that
+ * needs scrolling to show them is a picker you hunt through rather than scan.
+ *
+ * Declared last on purpose: it adds files to the same gallery the specs above
+ * count, and Playwright runs describes in declaration order under `workers: 1`.
+ */
+test.describe('a hundred images fit on a 1080p screen', () => {
+  const DENSITY = fileURLToPath(new URL('../fixtures/gallery/density', import.meta.url))
+  const COUNT = 100
+
+  test.use({ viewport: { width: 1920, height: 1080 } })
+
+  test.beforeAll(() => {
+    mkdirSync(DENSITY, { recursive: true })
+    // Tiny, because this is a layout test — the tile size is set by CSS, not by
+    // the pixels behind it, and 100 real renders would only slow the run down.
+    for (let i = 0; i < COUNT; i++) {
+      writeFileSync(`${DENSITY}/render-${String(i).padStart(3, '0')}.png`, solidPng(16, 16, [i, 64, 128]))
+    }
+  })
+
+  test.afterAll(() => {
+    rmSync(DENSITY, { recursive: true, force: true })
+  })
+
+  test('shows every image without scrolling', async ({ page, request }) => {
+    await resetFake(request)
+    await page.goto('/')
+    await openPicker(page)
+
+    await expect(page.getByTestId(T.folderPickerItem)).toHaveCount(COUNT + 2)
+
+    // The grid is the scroll container, so this is the whole claim: nothing is
+    // parked below the fold.
+    const overflow = await page.getByTestId(T.folderPickerGrid).evaluate((el) => ({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }))
+    expect(overflow.scrollHeight, 'the grid needs scrolling').toBeLessThanOrEqual(
+      overflow.clientHeight + 1,
+    )
+  })
+
+  test('lists in alphabetical order', async ({ page, request }) => {
+    await resetFake(request)
+    await page.goto('/')
+    await openPicker(page)
+
+    // Written out rather than derived from the same comparator the app uses, so
+    // this asserts the order a person would expect and not merely self-consistency.
+    const expected = [
+      'blue.png',
+      ...Array.from({ length: COUNT }, (_, i) => `density/render-${String(i).padStart(3, '0')}.png`),
+      'nested/green.png',
+    ]
+    const paths = await page
+      .getByTestId(T.folderPickerItem)
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-path')))
+    expect(paths).toEqual(expected)
+  })
+
+  test('captions a tile with its filename, not its folder', async ({ page, request }) => {
+    await resetFake(request)
+    await page.goto('/')
+    await openPicker(page)
+
+    const nested = page.locator(`[data-testid="${T.folderPickerItem}"][data-path="nested/green.png"]`)
+    // The full path stays reachable — as the tooltip, and as the alt text a test
+    // or a screen reader reads.
+    await expect(nested).toHaveText('green.png')
+    await expect(nested).toHaveAttribute('title', 'nested/green.png')
+    await expect(nested.locator('img')).toHaveAttribute('alt', 'nested/green.png')
   })
 })
 

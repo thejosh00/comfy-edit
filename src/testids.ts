@@ -26,6 +26,7 @@ export const T = {
 
   // Server-folder picker
   folderPicker: 'folder-picker',
+  folderPickerGrid: 'folder-picker-grid',
   // One per image, distinguished by data-path — the historyEntry pattern.
   folderPickerItem: 'folder-picker-item',
   folderPickerStatus: 'folder-picker-status',

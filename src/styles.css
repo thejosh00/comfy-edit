@@ -166,19 +166,21 @@ button[data-selected="true"] {
   align-items: center;
   justify-content: center;
   background: rgb(0 0 0 / 60%);
-  padding: 24px;
+  padding: 16px;
 }
 
 .picker {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: min(860px, 100%);
+  gap: 8px;
+  /* Wide enough that a hundred thumbnails are a grid to scan rather than a
+     column to scroll: at 1920 this is ~19 tiles across, eight rows deep. */
+  width: min(1600px, 100%);
   max-height: 100%;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
 }
 
 .picker-head {
@@ -190,21 +192,22 @@ button[data-selected="true"] {
 
 .picker-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
   overflow-y: auto;
   min-height: 0;
 }
 
 .picker-item {
   border: 2px solid transparent;
-  border-radius: 6px;
-  padding: 4px;
+  border-radius: 5px;
+  padding: 3px;
   background: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.2;
   cursor: pointer;
-  /* Long nested paths must not stretch the grid track. */
+  /* Long names must not stretch the grid track. The tooltip carries the full path. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -219,10 +222,10 @@ button[data-selected="true"] {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: 3px;
   display: block;
   background: #000;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .banner {

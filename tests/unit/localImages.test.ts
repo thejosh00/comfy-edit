@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+  alphabetical,
+  basename,
   displayName,
   isImageFilename,
   localFileUrl,
@@ -57,6 +59,63 @@ describe('newestFirst', () => {
   })
 })
 
+describe('alphabetical', () => {
+  it('orders by path', () => {
+    const sorted = alphabetical([IMAGE('c.png', 1), IMAGE('a.png', 2), IMAGE('b.png', 3)])
+    expect(sorted.map((i) => i.path)).toEqual(['a.png', 'b.png', 'c.png'])
+  })
+
+  it('ignores mtime — that is the whole difference from newestFirst', () => {
+    const sorted = alphabetical([IMAGE('a.png', 999), IMAGE('b.png', 1)])
+    expect(sorted.map((i) => i.path)).toEqual(['a.png', 'b.png'])
+  })
+
+  it('orders numbers by value, so render-2 comes before render-10', () => {
+    // Unpadded counters are the norm for hand-named files, and a plain string
+    // sort scatters them: render-10 would land between render-1 and render-2.
+    const sorted = alphabetical([
+      IMAGE('render-10.png', 1),
+      IMAGE('render-2.png', 1),
+      IMAGE('render-1.png', 1),
+    ])
+    expect(sorted.map((i) => i.path)).toEqual(['render-1.png', 'render-2.png', 'render-10.png'])
+  })
+
+  it('ignores case, as a file manager does', () => {
+    const sorted = alphabetical([IMAGE('beta.png', 1), IMAGE('Alpha.png', 1), IMAGE('gamma.png', 1)])
+    expect(sorted.map((i) => i.path)).toEqual(['Alpha.png', 'beta.png', 'gamma.png'])
+  })
+
+  it('keeps a subfolder together rather than interleaving it', () => {
+    const sorted = alphabetical([
+      IMAGE('sketches/b.png', 1),
+      IMAGE('renders/z.png', 1),
+      IMAGE('sketches/a.png', 1),
+      IMAGE('renders/y.png', 1),
+    ])
+    expect(sorted.map((i) => i.path)).toEqual([
+      'renders/y.png',
+      'renders/z.png',
+      'sketches/a.png',
+      'sketches/b.png',
+    ])
+  })
+
+  it('is deterministic for names that differ only by case', () => {
+    // Case-insensitive comparison calls these equal, so without a final
+    // tie-break their order would be whatever the sort happened to do.
+    expect(alphabetical([IMAGE('a.png', 1), IMAGE('A.png', 1)]).map((i) => i.path)).toEqual(
+      alphabetical([IMAGE('A.png', 1), IMAGE('a.png', 1)]).map((i) => i.path),
+    )
+  })
+
+  it('does not mutate its argument', () => {
+    const input = [IMAGE('b.png', 1), IMAGE('a.png', 2)]
+    alphabetical(input)
+    expect(input.map((i) => i.path)).toEqual(['b.png', 'a.png'])
+  })
+})
+
 describe('localFileUrl', () => {
   it('points at the same-origin middleware, so the canvas is never tainted', () => {
     expect(localFileUrl('blue.png')).toBe('/local/file?path=blue.png')
@@ -76,6 +135,20 @@ describe('displayName', () => {
 
   it('keeps the subfolder, which is often the only thing telling two files apart', () => {
     expect(displayName('nested/green.png')).toBe('nested/green.png')
+  })
+})
+
+describe('basename', () => {
+  // The tile caption. At thumbnail width there is only room for a handful of
+  // characters, and the leading folder is the part they can least afford: every
+  // file in one subfolder would caption identically.
+  it('drops the folder', () => {
+    expect(basename('nested/green.png')).toBe('green.png')
+    expect(basename('a/b/c/deep.png')).toBe('deep.png')
+  })
+
+  it('leaves a top-level name alone', () => {
+    expect(basename('blue.png')).toBe('blue.png')
   })
 })
 

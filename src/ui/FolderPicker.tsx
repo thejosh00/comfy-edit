@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { displayName, localFileUrl } from '../core/localImages'
+import { basename, displayName, localFileUrl } from '../core/localImages'
 import type { FolderState } from './useEditor'
 import { T } from '../testids'
 
@@ -49,7 +49,7 @@ export function FolderPicker({ folder, onPick, onClose }: Props) {
           {status(folder)}
         </span>
 
-        <div className="picker-grid">
+        <div className="picker-grid" data-testid={T.folderPickerGrid}>
           {folder.images.map((image) => (
             <button
               key={image.path}
@@ -60,7 +60,7 @@ export function FolderPicker({ folder, onPick, onClose }: Props) {
               onClick={() => onPick(image.path)}
             >
               <img src={localFileUrl(image.path)} alt={displayName(image.path)} loading="lazy" />
-              <span>{displayName(image.path)}</span>
+              <span>{basename(image.path)}</span>
             </button>
           ))}
         </div>

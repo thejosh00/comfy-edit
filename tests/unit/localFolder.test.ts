@@ -1,14 +1,29 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { fileURLToPath } from 'node:url'
+import { utimesSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { listImages, resolveWithinRoot, contentTypeFor } from '../../src/server/localFolder'
 
 const GALLERY = fileURLToPath(new URL('../fixtures/gallery', import.meta.url))
 
+// Fixed rather than inherited from the checkout: the cap test below turns on
+// which file is newer, and git does not preserve mtimes.
+beforeAll(() => {
+  utimesSync(resolve(GALLERY, 'blue.png'), new Date(1_000_000), new Date(1_000_000))
+  utimesSync(resolve(GALLERY, 'nested/green.png'), new Date(2_000_000), new Date(2_000_000))
+})
+
 describe('listImages', () => {
   it('finds images at the top level and in subfolders, as relative posix paths', async () => {
     const { images } = await listImages(GALLERY)
     expect(images.map((i) => i.path).sort()).toEqual(['blue.png', 'nested/green.png'])
+  })
+
+  it('presents them in alphabetical order', async () => {
+    // blue.png is the older of the two, so this is also the order mtime would
+    // *not* have produced.
+    const { images } = await listImages(GALLERY)
+    expect(images.map((i) => i.path)).toEqual(['blue.png', 'nested/green.png'])
   })
 
   it('omits non-images — a folder of images is rarely only images', async () => {
@@ -38,6 +53,16 @@ describe('listImages', () => {
     const { images, truncated } = await listImages(GALLERY, { limit: 1 })
     expect(images).toHaveLength(1)
     expect(truncated).toBe(true)
+  })
+
+  it('caps by keeping the newest, even though it presents alphabetically', async () => {
+    // The two orders are deliberately different jobs. Which images survive a cap
+    // should turn on recency — in a folder of renders the newest are the ones
+    // being worked on — while what the user reads is a stable A-Z list. Capping
+    // alphabetically would keep the oldest, which for `render-001.png` upwards is
+    // exactly the wrong half.
+    const { images } = await listImages(GALLERY, { limit: 1 })
+    expect(images.map((i) => i.path)).toEqual(['nested/green.png'])
   })
 })
 
