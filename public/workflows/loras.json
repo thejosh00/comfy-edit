@@ -1,13 +1,6 @@
 {
   "loras": [
     {
-      "id": "krea2-darkbrush",
-      "label": "Dark Brush",
-      "file": "krea2_darkbrush.safetensors",
-      "workflows": ["krea2-refine"],
-      "strength": 0.8
-    },
-    {
       "id": "qwen-female",
       "label": "Female",
       "file": "female.safetensors",
@@ -17,31 +10,19 @@
       "id": "krea2-hanna",
       "label": "Hanna",
       "file": "hanna.safetensors",
-      "workflows": ["krea2-refine"]
+      "workflows": ["krea2-refine","krea2-4k-upscale"]
     },
     {
       "id": "krea2-cressie",
       "label": "Cressie",
       "file": "cressie.safetensors",
-      "workflows": ["krea2-refine"]
+      "workflows": ["krea2-refine","krea2-4k-upscale"]
     },    
     {
       "id": "krea2-realism",
       "label": "Realism",
       "file": "realism.safetensors",
-      "workflows": ["krea2-refine"]
-    },
-    {
-      "id": "krea2-pp",
-      "label": "PP",
-      "file": "pp.safetensors",
-      "workflows": ["krea2-refine"]
-    },
-    {
-      "id": "krea2-ej",
-      "label": "EJ",
-      "file": "ej.safetensors",
-      "workflows": ["krea2-refine"]
-    }                    
+      "workflows": ["krea2-refine","krea2-4k-upscale"]
+    }                
   ]
 }
