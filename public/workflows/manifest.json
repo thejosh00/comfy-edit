@@ -28,8 +28,8 @@
     },
     {
       "id": "krea2-refine",
-      "label": "Krea2 Refinement Fullsize",
-      "file": "krea2-refine.api.json",
+      "label": "Krea2 4k Upscale",
+      "file": "krea2-4k-upscale.api.json",
       "imageNode": "1",
       "promptNode": "20",
       "seedNode": "40",

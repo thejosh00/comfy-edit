@@ -1,11 +1,23 @@
 {
   "1": {
     "inputs": {
-      "image": "01 (1).png"
+      "image": "01 (2).png"
     },
     "class_type": "LoadImage",
     "_meta": {
       "title": "Load Image (to refine)"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "FluxKontextImageScale",
+    "_meta": {
+      "title": "FluxKontextImageScale"
     }
   },
   "10": {
@@ -66,7 +78,7 @@
   "22": {
     "inputs": {
       "pixels": [
-        "1",
+        "75",
         0
       ],
       "vae": [
@@ -123,12 +135,12 @@
   },
   "40": {
     "inputs": {
-      "seed": 893713906053619,
-      "steps": 15,
+      "seed": 947326706349464,
+      "steps": 12,
       "cfg": 1,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "denoise": 0.5,
+      "denoise": 0.55,
       "model": [
         "32",
         0
@@ -178,6 +190,20 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "Save (refined)"
+    }
+  },
+  "75": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 2,
+      "image": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
     }
   }
 }
