@@ -25,6 +25,15 @@
       "promptNode": "20",
       "seedNode": "40",
       "loraNodes": ["30", "31", "32"]
-    }
+    },
+    {
+      "id": "krea2-refine",
+      "label": "Krea2 Refinement Fullsize",
+      "file": "krea2-refine.api.json",
+      "imageNode": "1",
+      "promptNode": "20",
+      "seedNode": "40",
+      "loraNodes": ["30", "31", "32"]
+    }    
   ]
 }
