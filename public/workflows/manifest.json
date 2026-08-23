@@ -27,7 +27,7 @@
       "loraNodes": ["30", "31", "32"]
     },
     {
-      "id": "krea2-refine",
+      "id": "krea2-4k-upscale",
       "label": "Krea2 4k Upscale",
       "file": "krea2-4k-upscale.api.json",
       "imageNode": "1",
