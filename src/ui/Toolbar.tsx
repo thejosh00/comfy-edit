@@ -6,6 +6,7 @@ const TOOLS: Array<{ id: ToolId; testId: string; label: string }> = [
   { id: 'line', testId: T.toolLine, label: 'Line' },
   { id: 'rect', testId: T.toolRect, label: 'Rect' },
   { id: 'ellipse', testId: T.toolEllipse, label: 'Ellipse' },
+  { id: 'eyedropper', testId: T.toolEyedropper, label: 'Pick' },
 ]
 
 type Props = {

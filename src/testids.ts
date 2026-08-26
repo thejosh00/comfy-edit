@@ -17,6 +17,7 @@ export const T = {
   toolLine: 'tool-line',
   toolRect: 'tool-rect',
   toolEllipse: 'tool-ellipse',
+  toolEyedropper: 'tool-eyedropper',
   colorPicker: 'color-picker',
   brushSize: 'brush-size',
   btnUndo: 'btn-undo',

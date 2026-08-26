@@ -40,8 +40,9 @@ element, so a spec has one element to find, one `toBlob`, and one `getImageData`
 
 | Test id | Element | Observable state |
 |---|---|---|
-| `tool-freehand` `tool-line` `tool-rect` `tool-ellipse` | tool buttons | `data-selected="true"` on exactly one |
-| `color-picker` | color input | current mark color |
+| `tool-freehand` `tool-line` `tool-rect` `tool-ellipse` | drawing tool buttons | `data-selected="true"` on exactly one |
+| `tool-eyedropper` | sample-a-colour tool | selected like any tool, but hands back to the previous drawing tool once a colour has been sampled |
+| `color-picker` | color input | current mark color; also where a sampled colour lands |
 | `brush-size` | number/range input | current stroke thickness |
 | `btn-undo` | button | `disabled` when there is nothing to undo (FR-015) |
 | `btn-redo` | button | `disabled` when there is nothing to redo (FR-015) |

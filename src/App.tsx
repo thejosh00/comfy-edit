@@ -85,6 +85,7 @@ export function App() {
         color={state.color}
         width={state.width}
         onCommit={editor.commit}
+        onPickColor={editor.pickColor}
         canvasRef={canvasRef}
       />
 

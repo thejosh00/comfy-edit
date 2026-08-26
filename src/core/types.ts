@@ -2,7 +2,11 @@ export type Point = { x: number; y: number }
 
 export type Size = { w: number; h: number }
 
-export type ToolId = 'freehand' | 'line' | 'rect' | 'ellipse'
+/** Tools that leave a mark. Kept separate so beginShape can only be handed one. */
+export type DrawToolId = 'freehand' | 'line' | 'rect' | 'ellipse'
+
+/** Everything selectable in the toolbar. The eyedropper samples rather than draws. */
+export type ToolId = DrawToolId | 'eyedropper'
 
 /**
  * One drawn mark. Color and width are captured at creation time, so changing the

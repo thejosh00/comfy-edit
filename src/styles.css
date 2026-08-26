@@ -62,6 +62,11 @@ body {
   max-height: 100%;
   object-fit: contain;
   cursor: crosshair;
+  /* The eyedropper samples on click, so the cursor should not promise a drag. */
+}
+
+.stage canvas[data-tool="eyedropper"] {
+  cursor: copy;
   touch-action: none;
   background: #000;
 }

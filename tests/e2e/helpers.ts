@@ -96,6 +96,18 @@ export async function drawDrag(
   await page.mouse.up()
 }
 
+/** Click one canvas pixel, in canvas-pixel coordinates. */
+export async function clickCanvasAt(page: Page, at: { x: number; y: number }): Promise<void> {
+  const canvas = page.getByTestId(T.editorCanvas)
+  const box = (await canvas.boundingBox())!
+  const scale = await page.evaluate((id) => {
+    const c = document.querySelector(`[data-testid="${id}"]`) as HTMLCanvasElement
+    return c.getBoundingClientRect().width / c.width
+  }, T.editorCanvas)
+
+  await page.mouse.click(box.x + at.x * scale, box.y + at.y * scale)
+}
+
 export type TransformOpts = {
   workflow?: string
   prompt?: string

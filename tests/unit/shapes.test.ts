@@ -5,6 +5,7 @@ import {
   normalizeRect,
   ellipseFromCorners,
   isDegenerate,
+  pixelAt,
   toCanvasPoint,
 } from '../../src/core/shapes'
 import type { Shape } from '../../src/core/types'
@@ -151,5 +152,22 @@ describe('toCanvasPoint', () => {
   it('accounts for the element offset within the page', () => {
     const rect = { left: 40, top: 20, width: 200, height: 200 }
     expect(toCanvasPoint(rect, { w: 400, h: 400 }, 140, 120)).toEqual({ x: 200, y: 200 })
+  })
+})
+
+describe('pixelAt', () => {
+  it('floors to the pixel the pointer is over', () => {
+    expect(pixelAt({ x: 10.9, y: 4.2 }, { w: 100, h: 100 })).toEqual({ x: 10, y: 4 })
+  })
+
+  it('clamps to the last pixel, not past it', () => {
+    // toCanvasPoint does not clamp, and a pointer released a fraction beyond the
+    // edge would otherwise ask getImageData for a pixel outside the canvas.
+    expect(pixelAt({ x: 100, y: 100 }, { w: 100, h: 100 })).toEqual({ x: 99, y: 99 })
+    expect(pixelAt({ x: 1e6, y: 1e6 }, { w: 64, h: 32 })).toEqual({ x: 63, y: 31 })
+  })
+
+  it('clamps negatives to the origin', () => {
+    expect(pixelAt({ x: -3, y: -0.5 }, { w: 100, h: 100 })).toEqual({ x: 0, y: 0 })
   })
 })

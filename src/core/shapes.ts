@@ -1,10 +1,20 @@
-import type { Ellipse, Point, Rect, Shape, Size, ToolId } from './types'
+import type { DrawToolId, Ellipse, Point, Rect, Shape, Size } from './types'
 
 export type DOMRectLike = { left: number; top: number; width: number; height: number }
 
 export type ExtendOpts = { constrain?: boolean }
 
-export function beginShape(tool: ToolId, at: Point, color: string, width: number): Shape {
+/**
+ * The pixel a pointer is over, clamped into the canvas. toCanvasPoint does not
+ * clamp, and a pointer a fraction past the edge would otherwise ask getImageData
+ * for a pixel that is not there.
+ */
+export function pixelAt(point: Point, size: Size): Point {
+  const clamp = (v: number, max: number) => Math.max(0, Math.min(max - 1, Math.floor(v)))
+  return { x: clamp(point.x, size.w), y: clamp(point.y, size.h) }
+}
+
+export function beginShape(tool: DrawToolId, at: Point, color: string, width: number): Shape {
   if (tool === 'freehand') return { kind: 'freehand', points: [at], color, width }
   return { kind: tool, from: at, to: at, color, width }
 }

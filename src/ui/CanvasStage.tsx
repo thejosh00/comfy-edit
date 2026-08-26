@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { renderScene, type Ctx2D } from '../core/render'
-import { beginShape, extendShape, isDegenerate, toCanvasPoint } from '../core/shapes'
+import { beginShape, extendShape, isDegenerate, pixelAt, toCanvasPoint } from '../core/shapes'
+import { sampledColor } from '../core/color'
 import type { Shape, ToolId } from '../core/types'
 import { T } from '../testids'
 import type { BaseImage } from './useEditor'
@@ -12,6 +13,7 @@ type Props = {
   color: string
   width: number
   onCommit: (shape: Shape) => void
+  onPickColor: (hex: string) => void
   canvasRef: React.RefObject<HTMLCanvasElement | null>
 }
 
@@ -22,6 +24,7 @@ export function CanvasStage({
   color,
   width,
   onCommit,
+  onPickColor,
   canvasRef,
 }: Props) {
   // The in-flight shape lives in a ref as well as state. State drives rendering;
@@ -62,8 +65,29 @@ export function CanvasStage({
     )
   }
 
+  /**
+   * Sample the composited canvas — base image plus every mark already drawn — so
+   * the eyedropper picks up what the user can actually see. Reading pixels is only
+   * possible because everything reaches the canvas same-origin; a tainted canvas
+   * makes getImageData throw.
+   */
+  const sample = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = e.currentTarget
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const at = pixelAt(pointFrom(e), { w: canvas.width, h: canvas.height })
+    const picked = sampledColor(ctx.getImageData(at.x, at.y, 1, 1).data)
+    if (picked) onPickColor(picked)
+  }
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!base) return
+    if (tool === 'eyedropper') {
+      // No pointer capture and no draft: sampling is a click, not a drag, and it
+      // must never reach the undo stack.
+      sample(e)
+      return
+    }
     e.currentTarget.setPointerCapture(e.pointerId)
     drawing.current = true
     setDraftShape(beginShape(tool, pointFrom(e), color, width))
@@ -101,6 +125,7 @@ export function CanvasStage({
     <div className="stage">
       <canvas
         data-testid={T.editorCanvas}
+        data-tool={tool}
         ref={canvasRef}
         width={base.width}
         height={base.height}

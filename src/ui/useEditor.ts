@@ -49,7 +49,7 @@ import {
   type LoadedWorkflow,
 } from '../comfy/client'
 import { runWorkflow, DEFAULT_RUN_TIMEOUT_MS } from '../comfy/runner'
-import type { Shape, ToolId } from '../core/types'
+import type { DrawToolId, Shape, ToolId } from '../core/types'
 
 export type BaseImage = { id: string; bitmap: ImageBitmap; width: number; height: number }
 
@@ -57,6 +57,12 @@ export type EditorState = {
   doc: DrawingDoc
   base: BaseImage | null
   tool: ToolId
+  /**
+   * The drawing tool to come back to once a colour has been sampled. Picking a
+   * colour is something you do in order to draw with it, so the eyedropper hands
+   * back to whatever was in use rather than leaving the user to reselect it.
+   */
+  lastDrawTool: DrawToolId
   color: string
   width: number
   loadError: string | null
@@ -151,6 +157,7 @@ type Action =
   | { type: 'redo' }
   | { type: 'clear' }
   | { type: 'setTool'; tool: ToolId }
+  | { type: 'colorPicked'; color: string }
   | { type: 'setColor'; color: string }
   | { type: 'setWidth'; width: number }
   | { type: 'loadError'; message: string | null }
@@ -189,6 +196,7 @@ const INITIAL: EditorState = {
   doc: createDoc(''),
   base: null,
   tool: 'freehand',
+  lastDrawTool: 'freehand',
   color: '#ff0000',
   width: 4,
   loadError: null,
@@ -302,7 +310,13 @@ function reducer(state: EditorState, action: Action): EditorState {
     case 'clear':
       return { ...state, doc: clearShapes(state.doc) }
     case 'setTool':
-      return { ...state, tool: action.tool }
+      return {
+        ...state,
+        tool: action.tool,
+        lastDrawTool: action.tool === 'eyedropper' ? state.lastDrawTool : action.tool,
+      }
+    case 'colorPicked':
+      return { ...state, color: action.color, tool: state.lastDrawTool }
     case 'setColor':
       return { ...state, color: action.color }
     case 'setWidth':
@@ -841,6 +855,7 @@ export function useEditor() {
     clear: useCallback(() => dispatch({ type: 'clear' }), []),
     setTool: useCallback((tool: ToolId) => dispatch({ type: 'setTool', tool }), []),
     setColor: useCallback((color: string) => dispatch({ type: 'setColor', color }), []),
+    pickColor: useCallback((color: string) => dispatch({ type: 'colorPicked', color }), []),
     setWidth: useCallback((width: number) => dispatch({ type: 'setWidth', width }), []),
     selectWorkflow: useCallback((id: string) => dispatch({ type: 'selectWorkflow', id }), []),
     setPrompt: useCallback((prompt: string) => dispatch({ type: 'setPrompt', prompt }), []),

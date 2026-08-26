@@ -106,7 +106,13 @@ test.describe('US3: return to an earlier image', () => {
     await page.getByTestId(T.seedLock).check()
     await page.getByTestId(T.runCount).selectOption('3')
     await page.getByTestId(T.runMode).selectOption('serial')
-    await page.getByTestId(T.loraSelect).first().selectOption('krea2-darkbrush')
+    // Whichever LoRA the catalog actually offers for this workflow, never a
+    // specific id: public/workflows/loras.json is the user's own file, and naming
+    // one entry here breaks this test the moment they rename or remove it. Index
+    // 1 is the first real LoRA — index 0 is the "None" slot.
+    const lora = page.getByTestId(T.loraSelect).first()
+    const chosenLora = (await lora.locator('option').nth(1).getAttribute('value'))!
+    await lora.selectOption(chosenLora)
 
     await loadFixture(page)
 
@@ -123,7 +129,7 @@ test.describe('US3: return to an earlier image', () => {
     await expect(page.getByTestId(T.seedLock)).toBeChecked()
     await expect(page.getByTestId(T.runCount)).toHaveValue('3')
     await expect(page.getByTestId(T.runMode)).toHaveValue('serial')
-    await expect(page.getByTestId(T.loraSelect).first()).toHaveValue('krea2-darkbrush')
+    await expect(page.getByTestId(T.loraSelect).first()).toHaveValue(chosenLora)
   })
 
   test('the run that follows a new image numbers from the start again', async ({ page }) => {
