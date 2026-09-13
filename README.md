@@ -1,4 +1,4 @@
-# comfy-edit
+# <img src="public/logo.svg" alt="" width="28" height="28" align="top"> comfy-edit
 
 Draw on an image, transform it through a live ComfyUI instance, draw on the result, repeat — all on
 one screen. Every image the workspace has held stays one click away.

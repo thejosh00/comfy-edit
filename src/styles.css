@@ -45,6 +45,21 @@ body {
   padding: 8px;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  user-select: none;
+}
+
+.brand img {
+  display: block;
+}
+
 .stage {
   grid-area: stage;
   display: flex;

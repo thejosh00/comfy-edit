@@ -4,6 +4,7 @@
  */
 export const T = {
   appRoot: 'app-root',
+  brandMark: 'brand-mark',
 
   // Workspace
   imageDropZone: 'image-drop-zone',

@@ -32,6 +32,11 @@ type Props = {
 export function Toolbar(props: Props) {
   return (
     <div className="toolbar">
+      <span className="brand" data-testid={T.brandMark}>
+        <img src="/logo.svg" alt="" width={22} height={22} />
+        comfy-edit
+      </span>
+
       <button onClick={props.onPickFile}>Open image…</button>
 
       <button data-testid={T.btnOpenFolder} onClick={props.onPickFolder}>

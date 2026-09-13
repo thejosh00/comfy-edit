@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>comfy-edit</title>
+  <!-- The frame is filled rather than transparent so the mark holds up on a
+       light browser tab as well as on the app's dark chrome. -->
+  <rect x="3.5" y="3.5" width="25" height="25" rx="7.5" fill="#24272c" stroke="#6ea8fe" stroke-width="2.5"/>
+  <path d="M9.5 23 C 12 16.5, 14.5 14.5, 17.5 13.5" fill="none" stroke="#e8e9ec" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="23" cy="9.5" r="2.75" fill="#6ea8fe"/>
+</svg>
