@@ -78,6 +78,14 @@ when the human-readable wording changes.
 
 ---
 
+## Tab title
+
+| Observable | State |
+|---|---|
+| `document.title` | `index.html`'s `<title>` (`comfy-edit`) when idle, done, or failed; **`[<progress>%] comfy-edit`** while a run is uploading, queued, or running (`0%` before the first progress event), with **`[<index>/<total>]`** after the percentage while a batch of more than one is in flight — the same shape as ComfyUI's own tab. Specs assert it with `expect(page).toHaveTitle(…)`. |
+
+---
+
 ## History strip
 
 | Test id | Element | Observable state |

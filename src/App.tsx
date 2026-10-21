@@ -7,6 +7,7 @@ import { FolderPicker } from './ui/FolderPicker'
 import { DirectoryChooser } from './ui/DirectoryChooser'
 import { SaveDialog } from './ui/SaveDialog'
 import { useEditor } from './ui/useEditor'
+import { tabTitle } from './core/tabTitle'
 import { T } from './testids'
 
 export function App() {
@@ -27,6 +28,12 @@ export function App() {
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
   }, [editor])
+
+  // index.html's <title>, read before anything overwrites it, is the idle title.
+  const idleTitle = useRef(document.title)
+  useEffect(() => {
+    document.title = tabTitle(idleTitle.current, state.run, state.batch)
+  }, [state.run, state.batch])
 
   /** The canvas already holds base + marks composited exactly as the user sees them. */
   const getCanvasBlob = useCallback(async (): Promise<Blob> => {
