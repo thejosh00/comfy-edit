@@ -2,7 +2,7 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 import { T } from '../../src/testids'
 
-export const FAKE = 'http://127.0.0.1:8199'
+export const FAKE = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT) || 8199}`
 
 export const FIXTURE = fileURLToPath(new URL('../fixtures/base.png', import.meta.url))
 export const NOT_AN_IMAGE = fileURLToPath(new URL('../fixtures/not-an-image.txt', import.meta.url))
@@ -35,6 +35,13 @@ export async function queuedGraphs(
 ): Promise<Array<{ promptId: string; graph: Record<string, { inputs: Record<string, unknown> }> }>> {
   const res = await request.get(`${FAKE}/__test/queued`)
   return (await res.json()).queued
+}
+
+export async function interruptsSeen(
+  request: APIRequestContext,
+): Promise<Array<{ promptId: string | null }>> {
+  const res = await request.get(`${FAKE}/__test/interrupts`)
+  return (await res.json()).interrupts
 }
 
 export async function loadFixture(page: Page, file = FIXTURE): Promise<void> {

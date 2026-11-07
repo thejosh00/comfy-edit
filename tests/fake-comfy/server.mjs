@@ -37,6 +37,7 @@ const DEFAULT_CONFIG = {
   rejectWith: null, // string -> POST /prompt responds 400 with this message
   dropWsAfter: null, // number -> close the socket after N messages
   neverComplete: false, // queue the job but never finish it (timeout testing)
+  stall: null, // string -> requests whose path starts with this are held, never answered
 }
 let config = { ...DEFAULT_CONFIG }
 
@@ -45,6 +46,16 @@ let promptCounter = 0
 const sockets = new Set()
 /** @type {null | {promptId: string, step: number, size: {width:number,height:number}}} */
 let pending = null
+/** Jobs queued behind `pending`, as a real queue would hold them. */
+let waiting = []
+/** @type {Array<{promptId: string | null}>} every POST /interrupt, in order */
+const interrupts = []
+/** @type {Set<import('node:http').ServerResponse>} requests held open by config.stall */
+const stalled = new Set()
+
+function startNext() {
+  pending = waiting.shift() ?? null
+}
 
 // --- helpers ---------------------------------------------------------------
 
@@ -117,7 +128,7 @@ function emit(type, data) {
 
 /** Produce the result image and record it in history. Terminal. */
 function complete(promptId, size) {
-  const filename = `comfy-edit_${String(promptCounter).padStart(5, '0')}_.png`
+  const filename = `comfy-edit_${promptId.slice(1).padStart(5, '0')}_.png`
   outputs.set(filename, borderedPng(size.width, size.height, MAGENTA, BLACK, 20))
 
   history.set(promptId, {
@@ -140,7 +151,7 @@ function complete(promptId, size) {
   } else {
     emit('execution_success', { prompt_id: promptId })
   }
-  pending = null
+  startNext()
 }
 
 function emitProgress(promptId, step, total) {
@@ -177,7 +188,7 @@ function advance() {
         messages: [['execution_error', { exception_message: config.failWith }]],
       },
     })
-    pending = null
+    startNext()
     return
   }
 
@@ -206,6 +217,12 @@ const server = createServer(async (req, res) => {
     return json(res, 403, { error: `origin not allowed: ${req.headers.origin}` })
   }
 
+  if (config.stall && !path.startsWith('/__test/') && path.startsWith(config.stall)) {
+    stalled.add(res)
+    res.on('close', () => stalled.delete(res))
+    return
+  }
+
   if (path === '/system_stats') return json(res, 200, { system: { comfyui_version: 'fake' } })
 
   // --- test control ---
@@ -216,6 +233,9 @@ const server = createServer(async (req, res) => {
     queued.length = 0
     config = { ...DEFAULT_CONFIG }
     pending = null
+    waiting = []
+    interrupts.length = 0
+    for (const held of stalled) held.destroy()
     promptCounter = 0
     sentSinceQueue = 0
     return json(res, 200, { ok: true })
@@ -236,7 +256,32 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { queued })
   }
 
+  if (path === '/__test/interrupts') {
+    return json(res, 200, { interrupts })
+  }
+
   // --- ComfyUI surface ---
+  if (path === '/interrupt' && req.method === 'POST') {
+    const raw = (await readBody(req)).toString()
+    const promptId = raw ? (JSON.parse(raw).prompt_id ?? null) : null
+    interrupts.push({ promptId })
+    // A targeted interrupt only stops the job it names; an untargeted one stops
+    // whatever is running. Both leave the rest of the queue alone.
+    if (pending && (promptId === null || promptId === pending.promptId)) {
+      emit('execution_interrupted', { prompt_id: pending.promptId, node_id: '3' })
+      history.set(pending.promptId, {
+        outputs: {},
+        status: {
+          status_str: 'error',
+          completed: false,
+          messages: [['execution_interrupted', { prompt_id: pending.promptId }]],
+        },
+      })
+      startNext()
+    }
+    return json(res, 200, {})
+  }
+
   if (path === '/upload/image' && req.method === 'POST') {
     const buf = await readBody(req)
     const ct = req.headers['content-type'] || ''
@@ -299,7 +344,9 @@ const server = createServer(async (req, res) => {
     sentSinceQueue = 0
 
     const size = pngSize(uploads.get(known)) ?? { width: 256, height: 256 }
-    pending = { promptId, step: 0, size }
+    const job = { promptId, step: 0, size }
+    if (pending) waiting.push(job)
+    else pending = job
 
     json(res, 200, { prompt_id: promptId, number: promptCounter, node_errors: {} })
 

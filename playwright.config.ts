@@ -1,8 +1,9 @@
 import { defineConfig } from '@playwright/test'
 
 const LIVE = !!process.env.COMFY_LIVE
-const FAKE_PORT = 8199
-const APP_PORT = 5174
+// Overridable so a second checkout can run the suite beside one already running.
+const FAKE_PORT = Number(process.env.E2E_FAKE_PORT) || 8199
+const APP_PORT = Number(process.env.E2E_APP_PORT) || 5174
 
 export default defineConfig({
   testDir: 'tests/e2e',
