@@ -6,6 +6,7 @@ import { HistoryStrip } from './ui/HistoryStrip'
 import { FolderPicker } from './ui/FolderPicker'
 import { DirectoryChooser } from './ui/DirectoryChooser'
 import { SaveDialog } from './ui/SaveDialog'
+import { UnsavedWarning } from './ui/UnsavedWarning'
 import { useEditor } from './ui/useEditor'
 import { tabTitle } from './core/tabTitle'
 import { T } from './testids'
@@ -23,7 +24,7 @@ export function App() {
         i.type.startsWith('image/'),
       )
       const file = item?.getAsFile()
-      if (file) void editor.loadImageFile(file)
+      if (file) editor.loadImageFile(file)
     }
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
@@ -60,7 +61,7 @@ export function App() {
         hidden
         onChange={(e) => {
           const file = e.target.files?.[0]
-          if (file) void editor.loadImageFile(file)
+          if (file) editor.loadImageFile(file)
           e.target.value = ''
         }}
       />
@@ -132,7 +133,7 @@ export function App() {
       {state.folder.open && (
         <FolderPicker
           folder={state.folder}
-          onPick={(path) => void editor.openLocalImage(path)}
+          onPick={editor.openLocalImage}
           onChangeFolder={editor.openChooser}
           onClose={editor.closeFolderPicker}
         />
@@ -155,6 +156,14 @@ export function App() {
           onChangeFolder={editor.changeSaveFolder}
           onSave={() => void editor.saveImage(getCanvasBlob)}
           onClose={editor.closeSaveDialog}
+        />
+      )}
+
+      {state.openWarning && (
+        <UnsavedWarning
+          count={editor.unsavedResults}
+          onDiscard={editor.discardResults}
+          onKeep={editor.keepResults}
         />
       )}
 

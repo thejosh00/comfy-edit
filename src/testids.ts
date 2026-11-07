@@ -75,6 +75,11 @@ export const T = {
   runProgress: 'run-progress',
   runError: 'run-error',
 
+  // Warning before unsaved results are dropped
+  unsavedWarning: 'unsaved-warning',
+  unsavedKeep: 'unsaved-keep',
+  unsavedDiscard: 'unsaved-discard',
+
   // History
   historyStrip: 'history-strip',
   historyEntry: 'history-entry',

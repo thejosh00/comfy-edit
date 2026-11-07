@@ -14,8 +14,10 @@ import { initialRunState, type RunState } from '../core/comfyEvents'
 import {
   addEntry,
   emptyHistory,
+  markSaved,
   nextGenerationLabel,
   selectEntry,
+  unsavedResultCount,
   type AppliedLora,
   type EntryOrigin,
   type HistoryState,
@@ -86,6 +88,8 @@ export type EditorState = {
   runLocked: boolean
   /** Why something was refused during a run, or how a cancelled run ended. */
   notice: string | null
+  /** An open is waiting on the user's answer to the unsaved-results warning. */
+  openWarning: boolean
 
   run: RunState
   /** Increments when a run starts. Lets an observer distinguish this run's
@@ -175,6 +179,7 @@ type Action =
   | { type: 'runState'; run: RunState }
   | { type: 'runLocked' }
   | { type: 'notice'; message: string }
+  | { type: 'openWarning'; open: boolean }
   | { type: 'runStarted'; seed: number; batchIndex: number; batchTotal: number }
   | { type: 'batchEnded'; notice: string | null }
   | { type: 'setBatchCount'; count: number }
@@ -220,6 +225,7 @@ const INITIAL: EditorState = {
   batch: null,
   runLocked: false,
   notice: null,
+  openWarning: false,
   run: initialRunState(),
   runSeq: 0,
   history: emptyHistory(),
@@ -373,6 +379,8 @@ function reducer(state: EditorState, action: Action): EditorState {
       return { ...state, run: action.run }
     case 'runLocked':
       return { ...state, runLocked: true, notice: null }
+    case 'openWarning':
+      return { ...state, openWarning: action.open }
     case 'notice':
       return { ...state, notice: action.message }
     case 'runStarted':
@@ -426,7 +434,11 @@ function reducer(state: EditorState, action: Action): EditorState {
     case 'saveFailed':
       return { ...state, save: { ...state.save, saving: false, error: action.message } }
     case 'saveDone':
-      return { ...state, save: { ...state.save, saving: false, open: false, savedPath: action.path } }
+      return {
+        ...state,
+        history: markSaved(state.history, state.history.currentId),
+        save: { ...state.save, saving: false, open: false, savedPath: action.path },
+      }
     case 'chooserOpened':
       return {
         ...state,
@@ -607,12 +619,44 @@ export function useEditor() {
     [],
   )
 
-  const loadImageFile = useCallback(
-    async (file: File): Promise<BaseImage | null> => {
+  const unsaved = unsavedResultCount(state.history)
+
+  /** Reload has only the browser's own prompt. A run in flight is unsaved work too. */
+  const guardUnload = unsaved > 0 || state.runLocked
+  useEffect(() => {
+    if (!guardUnload) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [guardUnload])
+
+  /**
+   * Every way of bringing an image in comes through here, because each one empties
+   * the history: refused during a run, and asked first over unsaved results.
+   */
+  const pendingOpen = useRef<(() => void) | null>(null)
+  const requestOpen = useCallback(
+    (open: () => void) => {
       if (runLock.current) {
         dispatch({ type: 'notice', message: OPEN_DURING_RUN })
-        return null
+      } else if (unsaved > 0) {
+        pendingOpen.current = open
+        dispatch({ type: 'openWarning', open: true })
+      } else {
+        open()
       }
+    },
+    [unsaved],
+  )
+  const answerOpenWarning = (discard: boolean) => {
+    const open = pendingOpen.current
+    pendingOpen.current = null
+    dispatch({ type: 'openWarning', open: false })
+    if (discard) open?.()
+  }
+
+  const loadImageFile = useCallback(
+    async (file: File): Promise<BaseImage | null> => {
       try {
         return await adoptImage(file, { kind: 'upload' }, false)
       } catch {
@@ -632,10 +676,6 @@ export function useEditor() {
     async (path: string): Promise<BaseImage | null> => {
       const dir = state.folder.dir
       if (!dir) return null
-      if (runLock.current) {
-        dispatch({ type: 'notice', message: OPEN_DURING_RUN })
-        return null
-      }
       const version = state.folder.images.find((i) => i.path === path)?.mtime
       try {
         const blob = await fetchLocalImage(dir, path, version)
@@ -899,8 +939,11 @@ export function useEditor() {
     hasShapes: !state.runLocked && state.doc.shapes.length > 0,
     cancelRun: useCallback(() => runLock.current?.abort(), []),
     noteDrawBlocked: useCallback(() => dispatch({ type: 'notice', message: DRAW_DURING_RUN }), []),
-    loadImageFile,
-    openLocalImage,
+    loadImageFile: (file: File) => requestOpen(() => void loadImageFile(file)),
+    openLocalImage: (path: string) => requestOpen(() => void openLocalImage(path)),
+    unsavedResults: unsaved,
+    keepResults: useCallback(() => answerOpenWarning(false), []),
+    discardResults: useCallback(() => answerOpenWarning(true), []),
     openFolderPicker,
     openChooser,
     chooseFolder,

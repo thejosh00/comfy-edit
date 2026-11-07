@@ -8,6 +8,8 @@ import {
   type EntryOrigin,
   type HistoryEntry,
   type HistoryState,
+  markSaved,
+  unsavedResultCount,
 } from '../../src/core/history'
 
 const upload = (over: Partial<HistoryEntry> = {}): Omit<HistoryEntry, 'id'> => ({
@@ -166,5 +168,40 @@ describe('nextGenerationLabel', () => {
     let h = seeded()
     h = addEntry(h, 'b', upload({ label: 'Original 2' }))
     expect(nextGenerationLabel(h, 'passthrough')).toBe('passthrough #1')
+  })
+})
+
+describe('unsaved results', () => {
+  const entry = (origin: EntryOrigin) => ({
+    label: 'x',
+    src: 'blob:x',
+    width: 1,
+    height: 1,
+    createdAt: 0,
+    parentId: null,
+    origin,
+  })
+  const generation: EntryOrigin = {
+    kind: 'generation',
+    workflowId: 'w',
+    prompt: 'p',
+    seed: 1,
+    promptId: 'p1',
+    loras: [],
+  }
+
+  it('counts generated images, not uploads: the user still has the file', () => {
+    let h = addEntry(emptyHistory(), 'a', entry({ kind: 'upload' }))
+    expect(unsavedResultCount(h)).toBe(0)
+    h = addEntry(h, 'b', entry(generation))
+    h = addEntry(h, 'c', entry(generation))
+    expect(unsavedResultCount(h)).toBe(2)
+  })
+
+  it('stops counting an entry once it has been saved, and only that entry', () => {
+    let h = addEntry(emptyHistory(), 'b', entry(generation))
+    h = addEntry(h, 'c', entry(generation))
+    expect(unsavedResultCount(markSaved(h, 'c'))).toBe(1)
+    expect(unsavedResultCount(markSaved(h, null))).toBe(2)
   })
 })

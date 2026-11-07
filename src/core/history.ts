@@ -22,6 +22,8 @@ export type HistoryEntry = {
   createdAt: number
   parentId: string | null
   origin: EntryOrigin
+  /** Written out to a folder at least once, so losing the entry loses no work. */
+  saved?: boolean
 }
 
 export type HistoryState = {
@@ -61,6 +63,21 @@ export function selectEntry(history: HistoryState, id: string): HistoryState {
 
 export function currentEntry(history: HistoryState): HistoryEntry | null {
   return history.entries.find((e) => e.id === history.currentId) ?? null
+}
+
+export function markSaved(history: HistoryState, id: string | null): HistoryState {
+  return {
+    ...history,
+    entries: history.entries.map((e) => (e.id === id ? { ...e, saved: true } : e)),
+  }
+}
+
+/**
+ * Generated images that exist nowhere but this session. An upload does not count:
+ * the user still has the file it came from.
+ */
+export function unsavedResultCount(history: HistoryState): number {
+  return history.entries.filter((e) => e.origin.kind === 'generation' && !e.saved).length
 }
 
 export function nextGenerationLabel(history: HistoryState, workflowId: string): string {

@@ -1,4 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
+import { mkdtempSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { T } from '../../src/testids'
 import {
@@ -256,5 +259,106 @@ test.describe('R9: a run belongs to its image', () => {
     await page.waitForTimeout(500)
     expect((await queuedGraphs(request)).length).toBe(1)
     expect(await historyCount(page)).toBe(1)
+  })
+})
+
+test.describe('R9: warning before unsaved results are dropped', () => {
+  const GALLERY = fileURLToPath(new URL('../fixtures/gallery', import.meta.url))
+
+  test.beforeEach(async ({ page, request }) => {
+    await resetFake(request)
+    await page.addInitScript((dir) => localStorage.setItem('comfy-edit.imagesDir', dir), GALLERY)
+    await page.goto('/')
+    await loadFixture(page)
+    await expect(page.getByTestId(T.editorCanvas)).toBeVisible()
+  })
+
+  const pickFromFolder = async (page: Page) => {
+    // Declining the warning leaves the picker open, for picking something else.
+    if (!(await page.getByTestId(T.folderPicker).isVisible())) {
+      await page.getByTestId(T.btnOpenFolder).click()
+    }
+    await page.locator(`[data-testid="${T.folderPickerItem}"][data-path="blue.png"]`).click()
+  }
+  const openers: Array<[string, (page: Page) => Promise<void>]> = [
+    ['pasting', pasteImage],
+    ['opening a file', (page) => loadFixture(page, OTHER_IMAGE)],
+    ['opening from the folder', pickFromFolder],
+  ]
+
+  for (const [name, open] of openers) {
+    test(`${name} over an unsaved result warns first; declining keeps it, accepting proceeds`, async ({
+      page,
+    }) => {
+      await runTransformFlow(page)
+      const before = await canvasHash(page)
+
+      await open(page)
+      await expect(page.getByTestId(T.unsavedWarning)).toBeVisible({ timeout: 3000 })
+      await expect(page.getByTestId(T.unsavedWarning)).toContainText('1 result has not been saved')
+      await page.getByTestId(T.unsavedKeep).click()
+      await expect(page.getByTestId(T.unsavedWarning)).toBeHidden()
+      expect(await canvasHash(page)).toBe(before)
+      expect(await historyCount(page)).toBe(2)
+
+      await open(page)
+      await page.getByTestId(T.unsavedDiscard).click()
+      await expect(page.getByTestId(T.unsavedWarning)).toBeHidden()
+      await expect.poll(() => historyCount(page)).toBe(1)
+      expect(await canvasHash(page)).not.toBe(before)
+    })
+  }
+
+  test('reloading over an unsaved result warns first; declining keeps it', async ({ page }) => {
+    await runTransformFlow(page)
+
+    const asked = page.waitForEvent('dialog', { timeout: 5000 })
+    // Does not settle while the prompt is up, and is refused once it is declined.
+    const reload = page.reload({ timeout: 5000 }).catch(() => null)
+    const dialog = await asked
+    expect(dialog.type()).toBe('beforeunload')
+    await dialog.dismiss()
+    await reload
+
+    expect(await historyCount(page)).toBe(2)
+    expect(await centerPixel(page)).toEqual(MAGENTA)
+  })
+
+  test('with nothing to lose there is no warning, so ordinary use is not slowed', async ({
+    page,
+  }) => {
+    let dialogs = 0
+    page.on('dialog', (d) => {
+      dialogs += 1
+      void d.accept()
+    })
+
+    // Replacing an image that has no results: straight through, each way.
+    for (const [, open] of openers) {
+      await open(page)
+      await expect(page.getByTestId(T.unsavedWarning)).toBeHidden()
+      await expect(page.getByTestId(T.historyEntry)).toHaveCount(1)
+    }
+    await page.reload()
+    await expect(page.getByTestId(T.imageDropZone)).toBeVisible()
+    expect(dialogs).toBe(0)
+
+    // A result that has been saved is nothing to lose either.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'r9-saved-')))
+    await loadFixture(page)
+    await runTransformFlow(page)
+    await page.getByTestId(T.btnSaveImage).click()
+    await page.getByTestId(T.dirChooserPath).fill(dir)
+    await page.getByTestId(T.dirChooserPath).press('Enter')
+    await expect(page.getByTestId(T.dirChooserUse)).toBeEnabled()
+    await page.getByTestId(T.dirChooserUse).click()
+    await page.getByTestId(T.saveDialogSave).click()
+    await expect(page.getByTestId(T.saveConfirmation)).toBeVisible()
+
+    await loadFixture(page, OTHER_IMAGE)
+    await expect(page.getByTestId(T.historyEntry)).toHaveCount(1)
+    await expect(page.getByTestId(T.unsavedWarning)).toBeHidden()
+    await page.reload()
+    expect(dialogs).toBe(0)
   })
 })
