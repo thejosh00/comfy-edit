@@ -115,6 +115,7 @@ test.describe('US3: return to an earlier image', () => {
     await lora.selectOption(chosenLora)
 
     await loadFixture(page)
+    await page.getByTestId(T.unsavedDiscard).click()
 
     // Only the new image remains, and it is what the workspace is showing.
     await expect(entries(page)).toHaveCount(1)
@@ -137,6 +138,7 @@ test.describe('US3: return to an earlier image', () => {
     await expect(entries(page).nth(1)).toContainText('passthrough #1')
 
     await loadFixture(page)
+    await page.getByTestId(T.unsavedDiscard).click()
     await runTransformFlow(page, { prompt: 'after the reset' })
 
     await expect(entries(page)).toHaveCount(2)
