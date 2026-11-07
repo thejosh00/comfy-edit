@@ -21,6 +21,8 @@ type Props = {
   run: RunState
   runSeq: number
   canRun: boolean
+  runLocked: boolean
+  notice: string | null
   onSelect: (id: string) => void
   onPrompt: (p: string) => void
   onSeed: (s: number) => void
@@ -29,6 +31,7 @@ type Props = {
   onBatchCount: (count: number) => void
   onBatchMode: (mode: BatchMode) => void
   onRun: () => void
+  onCancelRun: () => void
 }
 
 const MODE_LABEL: Record<BatchMode, string> = {
@@ -187,6 +190,12 @@ export function TransformPanel(props: Props) {
         {props.batchCount > 1 ? `Run ${props.batchCount}×` : 'Run'}
       </button>
 
+      {props.runLocked && (
+        <button data-testid={T.btnCancelRun} onClick={props.onCancelRun}>
+          Cancel
+        </button>
+      )}
+
       <div
         className="status"
         data-testid={T.runStatus}
@@ -207,6 +216,12 @@ export function TransformPanel(props: Props) {
         value={run.progress ?? 0}
         max={100}
       />
+
+      {props.notice && (
+        <div className="banner" data-testid={T.runNotice}>
+          {props.notice}
+        </div>
+      )}
 
       {run.error && (
         <div className="banner error" data-testid={T.runError}>

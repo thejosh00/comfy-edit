@@ -69,6 +69,8 @@ export const T = {
   runCount: 'run-count',
   runMode: 'run-mode',
   btnRun: 'btn-run',
+  btnCancelRun: 'btn-cancel-run',
+  runNotice: 'run-notice',
   runStatus: 'run-status',
   runProgress: 'run-progress',
   runError: 'run-error',

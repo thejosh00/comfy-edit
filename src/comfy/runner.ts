@@ -14,6 +14,7 @@ import {
   comfyWsUrl,
   fetchImageBlob,
   getHistory,
+  interruptRun,
   queuePrompt,
   uploadImage,
 } from './client'
@@ -35,7 +36,10 @@ export type RunArgs = {
   /** One entry per declared LoRA slot, in slot order. */
   loras?: LoraSelection[]
   timeoutMs?: number
+  /** Cancels the run: aborts its fetches and asks ComfyUI to stop it. */
   signal?: AbortSignal
+  /** ComfyUI could not be told to stop a cancelled run, so it may still be working. */
+  onInterruptFailed?: () => void
 }
 
 export type RunResult = { blob: Blob; promptId: string; seed: number }
@@ -89,8 +93,13 @@ export async function runWorkflow(
     socket = null
   }
 
+  let queueing = false
+  let queuedId: string | null = null
+
   const cleanup = () => {
     try {
+      // A frame still in transit must not repaint a run that has ended.
+      if (socket) socket.onmessage = null
       socket?.close()
     } catch {
       /* already gone */
@@ -109,7 +118,9 @@ export async function runWorkflow(
     })
 
     push({ ...state, phase: 'queued' })
+    queueing = true
     const { prompt_id: promptId } = await queuePrompt(graph, clientId, signal)
+    queuedId = promptId
     push({ ...state, phase: 'running', promptId })
 
     if (socket) {
@@ -127,10 +138,17 @@ export async function runWorkflow(
 
     const image = await pollUntilDone(promptId, signal, () => state, push)
     const blob = await fetchImageBlob(image, signal)
+    signal.throwIfAborted()
 
     push({ ...state, phase: 'done', progress: 100, images: [image] })
     return { blob, promptId, seed: args.seed }
   } catch (e) {
+    if (args.signal?.aborted) {
+      // Nothing to stop until the prompt has at least been sent. The caller resets
+      // the run state; an error here would read as a failure the user did not have.
+      if (queueing) void interruptRun(queuedId).catch(() => args.onInterruptFailed?.())
+      throw e
+    }
     const message = deadline.aborted
       ? `The transformation timed out after ${Math.round(timeoutMs / 1000)}s.`
       : e instanceof ComfyApiError || e instanceof Error

@@ -28,6 +28,8 @@ export const COMFY_BASE = '/comfy'
 
 export const WORKFLOWS_BASE = '/workflows'
 
+const INTERRUPT_TIMEOUT_MS = 5000
+
 export class ComfyApiError extends Error {
   constructor(
     message: string,
@@ -90,6 +92,21 @@ export async function getHistory(promptId: string, signal?: AbortSignal): Promis
   const res = await fetch(`${COMFY_BASE}/history/${promptId}`, { signal })
   if (!res.ok) throw new ComfyApiError(`History request failed (${res.status})`)
   return res.json()
+}
+
+/**
+ * Ask ComfyUI to stop a run. Naming the prompt means a run that has already ended
+ * cannot take someone else's job down with it; with no id it stops whatever is
+ * running. Bounded, because this is often called when the connection is the problem.
+ */
+export async function interruptRun(promptId: string | null): Promise<void> {
+  const res = await fetch(`${COMFY_BASE}/interrupt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(promptId ? { prompt_id: promptId } : {}),
+    signal: AbortSignal.timeout(INTERRUPT_TIMEOUT_MS),
+  })
+  if (!res.ok) throw new ComfyApiError(`Interrupt failed (${res.status}).`)
 }
 
 export function viewUrl(ref: OutputImageRef): string {

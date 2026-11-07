@@ -93,6 +93,8 @@ export function App() {
         width={state.width}
         onCommit={editor.commit}
         onPickColor={editor.pickColor}
+        locked={state.runLocked}
+        onBlocked={editor.noteDrawBlocked}
         canvasRef={canvasRef}
       />
 
@@ -112,6 +114,8 @@ export function App() {
         run={state.run}
         runSeq={state.runSeq}
         canRun={editor.canRun}
+        runLocked={state.runLocked}
+        notice={state.notice}
         onSelect={editor.selectWorkflow}
         onPrompt={editor.setPrompt}
         onSeed={editor.setSeed}
@@ -120,6 +124,7 @@ export function App() {
         onBatchCount={editor.setBatchCount}
         onBatchMode={editor.setBatchMode}
         onRun={onRun}
+        onCancelRun={editor.cancelRun}
       />
 
       <HistoryStrip history={state.history} onSelect={editor.selectHistoryEntry} />

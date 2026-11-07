@@ -84,6 +84,8 @@ export type EditorState = {
   batch: { index: number; total: number } | null
   /** True from the click on Run until the batch has ended, however it ended. */
   runLocked: boolean
+  /** Why something was refused during a run, or how a cancelled run ended. */
+  notice: string | null
 
   run: RunState
   /** Increments when a run starts. Lets an observer distinguish this run's
@@ -172,8 +174,9 @@ type Action =
   | { type: 'setSeedLock'; locked: boolean }
   | { type: 'runState'; run: RunState }
   | { type: 'runLocked' }
+  | { type: 'notice'; message: string }
   | { type: 'runStarted'; seed: number; batchIndex: number; batchTotal: number }
-  | { type: 'batchEnded' }
+  | { type: 'batchEnded'; notice: string | null }
   | { type: 'setBatchCount'; count: number }
   | { type: 'setBatchMode'; mode: BatchMode }
   | { type: 'folderListed'; folder: LocalFolder }
@@ -216,6 +219,7 @@ const INITIAL: EditorState = {
   batchMode: 'variations',
   batch: null,
   runLocked: false,
+  notice: null,
   run: initialRunState(),
   runSeq: 0,
   history: emptyHistory(),
@@ -368,7 +372,9 @@ function reducer(state: EditorState, action: Action): EditorState {
     case 'runState':
       return { ...state, run: action.run }
     case 'runLocked':
-      return { ...state, runLocked: true }
+      return { ...state, runLocked: true, notice: null }
+    case 'notice':
+      return { ...state, notice: action.message }
     case 'runStarted':
       return {
         ...state,
@@ -378,7 +384,7 @@ function reducer(state: EditorState, action: Action): EditorState {
         run: { ...initialRunState(), phase: 'uploading' },
       }
     case 'batchEnded':
-      return { ...state, batch: null, runLocked: false }
+      return { ...state, batch: null, runLocked: false, notice: action.notice }
     case 'setBatchCount':
       return { ...state, batchCount: clampBatchCount(action.count) }
     case 'setBatchMode':
@@ -467,6 +473,18 @@ function reducer(state: EditorState, action: Action): EditorState {
   }
 }
 
+/**
+ * What drawing and opening do during a run: nothing happens, and this says so. A
+ * run belongs to the image it started on, so there is no second image or mark for
+ * its result to land on or wipe out.
+ */
+const DRAW_DURING_RUN = 'Drawing is paused while a run is in progress. Cancel the run to draw now.'
+const OPEN_DURING_RUN = 'A run is in progress on this image. Cancel it first to open another.'
+const SELECT_DURING_RUN = 'A run is in progress on this image. Cancel it first to switch images.'
+const CANCELLED = 'Run cancelled. The image and history are as they were.'
+const INTERRUPT_FAILED =
+  'Run cancelled here, but ComfyUI could not be told to stop. It may still be using the GPU.'
+
 const RUN_TIMEOUT_MS = Number(import.meta.env.VITE_RUN_TIMEOUT_MS) || DEFAULT_RUN_TIMEOUT_MS
 
 export type TransformOutcome = {
@@ -546,14 +564,26 @@ export function useEditor() {
   // the same id the history entry uses, so selecting an entry finds its bitmap.
   const bitmaps = useRef(new Map<string, ImageBitmap>())
 
+  /** Held from the click on Run to the end of the batch; aborting it cancels the run. */
+  const runLock = useRef<AbortController | null>(null)
+
   const adoptImage = useCallback(
     async (
       blob: Blob,
       origin: EntryOrigin,
       rebased: boolean,
       parentId?: string | null,
-    ): Promise<BaseImage> => {
+      signal?: AbortSignal,
+    ): Promise<BaseImage | null> => {
       const bitmap = await createImageBitmap(blob)
+      // Both can become true while the bitmap decodes. An open that started before
+      // the run must not swap the image out from under it; a cancelled run's result
+      // must not land after the user was told the run had stopped.
+      if (signal?.aborted || (origin.kind === 'upload' && runLock.current)) {
+        bitmap.close()
+        if (origin.kind === 'upload') dispatch({ type: 'notice', message: OPEN_DURING_RUN })
+        return null
+      }
       const base: BaseImage = {
         id: `img-${crypto.randomUUID()}`,
         bitmap,
@@ -579,6 +609,10 @@ export function useEditor() {
 
   const loadImageFile = useCallback(
     async (file: File): Promise<BaseImage | null> => {
+      if (runLock.current) {
+        dispatch({ type: 'notice', message: OPEN_DURING_RUN })
+        return null
+      }
       try {
         return await adoptImage(file, { kind: 'upload' }, false)
       } catch {
@@ -598,11 +632,15 @@ export function useEditor() {
     async (path: string): Promise<BaseImage | null> => {
       const dir = state.folder.dir
       if (!dir) return null
+      if (runLock.current) {
+        dispatch({ type: 'notice', message: OPEN_DURING_RUN })
+        return null
+      }
       const version = state.folder.images.find((i) => i.path === path)?.mtime
       try {
         const blob = await fetchLocalImage(dir, path, version)
         const base = await adoptImage(blob, { kind: 'upload' }, false)
-        dispatch({ type: 'folderClosed' })
+        if (base) dispatch({ type: 'folderClosed' })
         return base
       } catch {
         // The picker stays open — the user's next move is almost always to pick a
@@ -705,6 +743,10 @@ export function useEditor() {
   )
 
   const selectHistoryEntry = useCallback((id: string) => {
+    if (runLock.current) {
+      dispatch({ type: 'notice', message: SELECT_DURING_RUN })
+      return
+    }
     const bitmap = bitmaps.current.get(id)
     if (!bitmap) return
     dispatch({
@@ -714,7 +756,6 @@ export function useEditor() {
   }, [])
 
   const selected = state.workflows.find((w) => w.meta.id === state.selectedWorkflowId)
-  const runLock = useRef(false)
 
   /** Slots this workflow declares, and the LoRAs it can actually load. */
   const loraSlots = selected?.meta.loraNodes?.length ?? 0
@@ -758,7 +799,9 @@ export function useEditor() {
       // Taken synchronously, in the click itself: state would not flip canRun until
       // the next render, by which time a double-click has already started a second run.
       if (runLock.current) return []
-      runLock.current = true
+      const controller = new AbortController()
+      runLock.current = controller
+      const { signal } = controller
       dispatch({ type: 'runLocked' })
 
       const total = clampBatchCount(state.batchCount)
@@ -773,6 +816,7 @@ export function useEditor() {
         let input = await getBlob()
 
         for (let i = 0; i < total; i++) {
+          signal.throwIfAborted()
           const seed = seeds[i]!
           dispatch({ type: 'runStarted', seed, batchIndex: i + 1, batchTotal: total })
 
@@ -785,6 +829,8 @@ export function useEditor() {
               seed,
               loras: state.loras,
               timeoutMs: RUN_TIMEOUT_MS,
+              signal,
+              onInterruptFailed: () => dispatch({ type: 'notice', message: INTERRUPT_FAILED }),
             },
             (run) => dispatch({ type: 'runState', run }),
           )
@@ -801,7 +847,9 @@ export function useEditor() {
             },
             true,
             state.batchMode === 'variations' ? originId : undefined,
+            signal,
           )
+          if (!base) break
 
           outcomes.push({
             imageId: base.id,
@@ -815,10 +863,12 @@ export function useEditor() {
           if (state.batchMode === 'serial') input = result.blob
         }
       } catch {
-        // runWorkflow has already pushed an error RunState carrying the reason.
+        // runWorkflow has already pushed an error RunState carrying the reason,
+        // except for a cancel, which is not an error.
       } finally {
-        runLock.current = false
-        dispatch({ type: 'batchEnded' })
+        runLock.current = null
+        if (signal.aborted) dispatch({ type: 'runState', run: initialRunState() })
+        dispatch({ type: 'batchEnded', notice: signal.aborted ? CANCELLED : null })
       }
 
       return outcomes
@@ -843,9 +893,12 @@ export function useEditor() {
     canRun,
     loraSlots,
     availableLoras,
-    canUndo: canUndo(state.doc),
-    canRedo: canRedo(state.doc),
-    hasShapes: state.doc.shapes.length > 0,
+    // Disabled during a run: the result rebases the document when it lands.
+    canUndo: !state.runLocked && canUndo(state.doc),
+    canRedo: !state.runLocked && canRedo(state.doc),
+    hasShapes: !state.runLocked && state.doc.shapes.length > 0,
+    cancelRun: useCallback(() => runLock.current?.abort(), []),
+    noteDrawBlocked: useCallback(() => dispatch({ type: 'notice', message: DRAW_DURING_RUN }), []),
     loadImageFile,
     openLocalImage,
     openFolderPicker,
@@ -863,7 +916,12 @@ export function useEditor() {
     editChooserPath: useCallback((path: string) => dispatch({ type: 'chooserPathEdited', path }), []),
     selectHistoryEntry,
     runBatch,
-    commit: useCallback((shape: Shape) => dispatch({ type: 'commit', shape }), []),
+    commit: useCallback((shape: Shape) => {
+      // A stroke begun before Run and finished after it: refused out loud, never
+      // committed only to be wiped by the result.
+      if (runLock.current) dispatch({ type: 'notice', message: DRAW_DURING_RUN })
+      else dispatch({ type: 'commit', shape })
+    }, []),
     undo: useCallback(() => dispatch({ type: 'undo' }), []),
     redo: useCallback(() => dispatch({ type: 'redo' }), []),
     clear: useCallback(() => dispatch({ type: 'clear' }), []),

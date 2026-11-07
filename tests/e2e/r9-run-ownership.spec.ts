@@ -1,8 +1,12 @@
 import { test, expect, type Page } from '@playwright/test'
+import { fileURLToPath } from 'node:url'
 import { T } from '../../src/testids'
 import {
   advanceFake,
+  canvasHash,
   configureFake,
+  drawDrag,
+  interruptsSeen,
   loadFixture,
   queuedGraphs,
   resetFake,
@@ -18,6 +22,7 @@ import {
  */
 
 const STEPS = 4
+const OTHER_IMAGE = fileURLToPath(new URL('../fixtures/gallery/blue.png', import.meta.url))
 
 async function historyCount(page: Page): Promise<number> {
   return page.getByTestId(T.historyEntry).count()
@@ -93,3 +98,163 @@ test.describe('R9: lock and deadline', () => {
   }
 })
 
+
+/** Dispatch a real paste event carrying a small image, as AS2 in us1-drawing does. */
+async function pasteImage(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 64
+    canvas.height = 64
+    canvas.getContext('2d')!.fillRect(0, 0, 64, 64)
+    const blob = await new Promise<Blob>((r) => canvas.toBlob((b) => r(b!), 'image/png'))
+    const dt = new DataTransfer()
+    dt.items.add(new File([blob], 'pasted.png', { type: 'image/png' }))
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }))
+  })
+}
+
+async function parentsMissing(page: Page): Promise<string[]> {
+  return page.getByTestId(T.historyEntry).evaluateAll((els) => {
+    const ids = new Set(els.map((e) => e.getAttribute('data-entry-id')))
+    return els
+      .map((e) => e.getAttribute('data-parent-id') ?? '')
+      .filter((p) => p !== '' && !ids.has(p))
+  })
+}
+
+test.describe('R9: a run belongs to its image', () => {
+  test.beforeEach(async ({ page, request }) => {
+    await resetFake(request)
+    await page.goto('/')
+    await loadFixture(page)
+    await expect(page.getByTestId(T.editorCanvas)).toBeVisible()
+    await configureFake(request, { mode: 'stepped' })
+  })
+
+  async function startRun(page: Page): Promise<void> {
+    await page.getByTestId(T.promptInput).fill('owned')
+    await page.getByTestId(T.btnRun).click()
+    await expect(page.getByTestId(T.runStatus)).toHaveAttribute('data-phase', 'running', {
+      timeout: 15_000,
+    })
+  }
+
+  const openers: Array<[string, (page: Page) => Promise<void>]> = [
+    ['opening a file', (page) => loadFixture(page, OTHER_IMAGE)],
+    ['pasting', pasteImage],
+  ]
+  for (const [name, open] of openers) {
+    test(`${name} mid-run: the old result never replaces a new image`, async ({
+      page,
+      request,
+    }) => {
+      const before = await canvasHash(page)
+      await startRun(page)
+
+      await open(page)
+      // Read now but asserted last, so that on base this fails on the harm itself.
+      const refusedOutLoud = await page
+        .getByTestId(T.runNotice)
+        .waitFor({ timeout: 1000 })
+        .then(() => true)
+        .catch(() => false)
+      const during = await canvasHash(page)
+
+      await finishRun(page, request)
+
+      // On base the result lands on the new image, parented to an entry that was
+      // dropped from the history.
+      expect(await parentsMissing(page)).toEqual([])
+      expect(during).toBe(before)
+      expect(await historyCount(page)).toBe(2)
+      expect(await centerPixel(page)).toEqual(MAGENTA)
+      expect(refusedOutLoud).toBe(true)
+    })
+  }
+
+  test('selecting a history entry mid-run: the result does not land on the other image', async ({
+    page,
+    request,
+  }) => {
+    await configureFake(request, { mode: 'instant' })
+    await runTransformFlow(page)
+    const before = await canvasHash(page)
+    await configureFake(request, { mode: 'stepped' })
+    await startRun(page)
+
+    await page.getByTestId(T.historyEntry).first().click()
+
+    expect(await canvasHash(page)).toBe(before)
+    await expect(page.getByTestId(T.runNotice)).toBeVisible()
+    await finishRun(page, request)
+    expect(await historyCount(page)).toBe(3)
+  })
+
+  test('drawing mid-run: no mark is silently lost', async ({ page, request }) => {
+    // Through the centre of the image, so that centerPixel reads the mark itself.
+    const stroke = () => drawDrag(page, { x: 100, y: 100 }, { x: 156, y: 156 })
+    await startRun(page)
+
+    await stroke()
+
+    // A mark accepted here would be wiped when the result lands, and undo would not
+    // bring it back. So it is refused, and the refusal is visible.
+    expect(await centerPixel(page)).toEqual(TEAL)
+    await expect(page.getByTestId(T.runNotice)).toContainText(/drawing is paused/i)
+    await expect(page.getByTestId(T.btnUndo)).toBeDisabled()
+
+    await finishRun(page, request)
+    await expect(page.getByTestId(T.runNotice)).toBeHidden()
+    expect(await centerPixel(page)).toEqual(MAGENTA)
+
+    // Drawing is back as soon as the run is over.
+    await stroke()
+    await expect.poll(() => centerPixel(page)).toEqual([255, 0, 0])
+    await expect(page.getByTestId(T.btnUndo)).toBeEnabled()
+  })
+
+  test('Cancel aborts the fetches, records /interrupt, and leaves image and history as they were', async ({
+    page,
+    request,
+  }) => {
+    const before = await canvasHash(page)
+    await startRun(page)
+
+    // Hold the next poll open, so there is a fetch in flight for Cancel to abort.
+    await configureFake(request, { stall: '/history' })
+    const polled = await page.waitForRequest(/\/comfy\/history\//, { timeout: 5000 })
+    const aborted = page.waitForEvent('requestfailed', {
+      predicate: (r) => r === polled,
+      timeout: 5000,
+    })
+
+    await page.getByTestId(T.btnCancelRun).click({ timeout: 3000 })
+
+    expect((await aborted).failure()?.errorText).toBe('net::ERR_ABORTED')
+    await expect.poll(() => interruptsSeen(request)).toEqual([{ promptId: 'p1' }])
+    await expect(page.getByTestId(T.runStatus)).toHaveAttribute('data-phase', 'idle')
+    await expect(page.getByTestId(T.runNotice)).toContainText(/cancelled/i)
+    await expect(page.getByTestId(T.runError)).toBeHidden()
+    await expect(page.getByTestId(T.btnRun)).toBeEnabled()
+    await expect(page.getByTestId(T.btnCancelRun)).toBeHidden()
+    expect(await canvasHash(page)).toBe(before)
+    expect(await historyCount(page)).toBe(1)
+
+    // And the next run works, with no reload.
+    await configureFake(request, { stall: null, mode: 'instant' })
+    await runTransformFlow(page)
+    expect(await centerPixel(page)).toEqual(MAGENTA)
+  })
+
+  test('Cancel during a batch stops the runs still to come', async ({ page, request }) => {
+    await page.getByTestId(T.runCount).selectOption('3')
+    await startRun(page)
+
+    await page.getByTestId(T.btnCancelRun).click({ timeout: 3000 })
+
+    await expect(page.getByTestId(T.runStatus)).toHaveAttribute('data-batch-total', '0')
+    await page.waitForTimeout(500)
+    expect((await queuedGraphs(request)).length).toBe(1)
+    expect(await historyCount(page)).toBe(1)
+  })
+})

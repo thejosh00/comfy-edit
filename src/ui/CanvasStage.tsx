@@ -14,6 +14,9 @@ type Props = {
   width: number
   onCommit: (shape: Shape) => void
   onPickColor: (hex: string) => void
+  /** A run is in flight: no new marks, and `onBlocked` says why. */
+  locked: boolean
+  onBlocked: () => void
   canvasRef: React.RefObject<HTMLCanvasElement | null>
 }
 
@@ -25,6 +28,8 @@ export function CanvasStage({
   width,
   onCommit,
   onPickColor,
+  locked,
+  onBlocked,
   canvasRef,
 }: Props) {
   // The in-flight shape lives in a ref as well as state. State drives rendering;
@@ -86,6 +91,10 @@ export function CanvasStage({
       // No pointer capture and no draft: sampling is a click, not a drag, and it
       // must never reach the undo stack.
       sample(e)
+      return
+    }
+    if (locked) {
+      onBlocked()
       return
     }
     e.currentTarget.setPointerCapture(e.pointerId)
