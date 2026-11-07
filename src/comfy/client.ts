@@ -40,26 +40,35 @@ export class ComfyApiError extends Error {
 
 export type UploadResult = { name: string; subfolder: string; type: string }
 
-export async function uploadImage(blob: Blob, filename: string): Promise<UploadResult> {
+export async function uploadImage(
+  blob: Blob,
+  filename: string,
+  signal?: AbortSignal,
+): Promise<UploadResult> {
   const form = new FormData()
   // Field must be named "image"; never set Content-Type by hand — the browser has
   // to generate the multipart boundary.
   form.append('image', blob, filename)
   form.append('type', 'input')
 
-  const res = await fetch(`${COMFY_BASE}/upload/image`, { method: 'POST', body: form })
+  const res = await fetch(`${COMFY_BASE}/upload/image`, { method: 'POST', body: form, signal })
   if (!res.ok) {
     throw new ComfyApiError(`Upload failed (${res.status}): ${await res.text()}`)
   }
   return (await res.json()) as UploadResult
 }
 
-export async function queuePrompt(graph: ApiGraph, clientId: string): Promise<{ prompt_id: string }> {
+export async function queuePrompt(
+  graph: ApiGraph,
+  clientId: string,
+  signal?: AbortSignal,
+): Promise<{ prompt_id: string }> {
   const res = await fetch(`${COMFY_BASE}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     // snake_case here; the websocket query parameter is camelCase clientId.
     body: JSON.stringify({ prompt: graph, client_id: clientId }),
+    signal,
   })
 
   if (!res.ok) {
@@ -77,8 +86,8 @@ export async function queuePrompt(graph: ApiGraph, clientId: string): Promise<{ 
   return (await res.json()) as { prompt_id: string }
 }
 
-export async function getHistory(promptId: string): Promise<unknown> {
-  const res = await fetch(`${COMFY_BASE}/history/${promptId}`)
+export async function getHistory(promptId: string, signal?: AbortSignal): Promise<unknown> {
+  const res = await fetch(`${COMFY_BASE}/history/${promptId}`, { signal })
   if (!res.ok) throw new ComfyApiError(`History request failed (${res.status})`)
   return res.json()
 }
@@ -92,8 +101,8 @@ export function viewUrl(ref: OutputImageRef): string {
   return `${COMFY_BASE}/view?${params}`
 }
 
-export async function fetchImageBlob(ref: OutputImageRef): Promise<Blob> {
-  const res = await fetch(viewUrl(ref))
+export async function fetchImageBlob(ref: OutputImageRef, signal?: AbortSignal): Promise<Blob> {
+  const res = await fetch(viewUrl(ref), { signal })
   if (!res.ok) throw new ComfyApiError(`Could not fetch the result image (${res.status}).`)
   return res.blob()
 }

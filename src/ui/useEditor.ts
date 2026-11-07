@@ -82,6 +82,8 @@ export type EditorState = {
   batchMode: BatchMode
   /** Non-null only while a batch is in flight; `index` is 1-based. */
   batch: { index: number; total: number } | null
+  /** True from the click on Run until the batch has ended, however it ended. */
+  runLocked: boolean
 
   run: RunState
   /** Increments when a run starts. Lets an observer distinguish this run's
@@ -169,6 +171,7 @@ type Action =
   | { type: 'setSeed'; seed: number }
   | { type: 'setSeedLock'; locked: boolean }
   | { type: 'runState'; run: RunState }
+  | { type: 'runLocked' }
   | { type: 'runStarted'; seed: number; batchIndex: number; batchTotal: number }
   | { type: 'batchEnded' }
   | { type: 'setBatchCount'; count: number }
@@ -212,6 +215,7 @@ const INITIAL: EditorState = {
   batchCount: 1,
   batchMode: 'variations',
   batch: null,
+  runLocked: false,
   run: initialRunState(),
   runSeq: 0,
   history: emptyHistory(),
@@ -363,6 +367,8 @@ function reducer(state: EditorState, action: Action): EditorState {
       return { ...state, seedLocked: action.locked }
     case 'runState':
       return { ...state, run: action.run }
+    case 'runLocked':
+      return { ...state, runLocked: true }
     case 'runStarted':
       return {
         ...state,
@@ -372,7 +378,7 @@ function reducer(state: EditorState, action: Action): EditorState {
         run: { ...initialRunState(), phase: 'uploading' },
       }
     case 'batchEnded':
-      return { ...state, batch: null }
+      return { ...state, batch: null, runLocked: false }
     case 'setBatchCount':
       return { ...state, batchCount: clampBatchCount(action.count) }
     case 'setBatchMode':
@@ -708,6 +714,7 @@ export function useEditor() {
   }, [])
 
   const selected = state.workflows.find((w) => w.meta.id === state.selectedWorkflowId)
+  const runLock = useRef(false)
 
   /** Slots this workflow declares, and the LoRAs it can actually load. */
   const loraSlots = selected?.meta.loraNodes?.length ?? 0
@@ -720,6 +727,7 @@ export function useEditor() {
     // A batch briefly reads "done" between runs; without this the button would
     // flicker back to enabled mid-batch and a second batch could be started.
     state.batch === null &&
+    !state.runLocked &&
     state.run.phase !== 'uploading' &&
     state.run.phase !== 'queued' &&
     state.run.phase !== 'running'
@@ -747,6 +755,11 @@ export function useEditor() {
   const runBatch = useCallback(
     async (getBlob: () => Promise<Blob>): Promise<TransformOutcome[]> => {
       if (!selected || !state.base) return []
+      // Taken synchronously, in the click itself: state would not flip canRun until
+      // the next render, by which time a double-click has already started a second run.
+      if (runLock.current) return []
+      runLock.current = true
+      dispatch({ type: 'runLocked' })
 
       const total = clampBatchCount(state.batchCount)
       const seeds = batchSeeds(total, state.seed, state.seedLocked)
@@ -804,6 +817,7 @@ export function useEditor() {
       } catch {
         // runWorkflow has already pushed an error RunState carrying the reason.
       } finally {
+        runLock.current = false
         dispatch({ type: 'batchEnded' })
       }
 

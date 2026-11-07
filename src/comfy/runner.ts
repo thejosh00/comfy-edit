@@ -20,6 +20,11 @@ import {
 
 export const DEFAULT_RUN_TIMEOUT_MS = 300_000
 const POLL_INTERVAL_MS = 1500
+/**
+ * One stalled poll must not use up the whole deadline: polling is the authority
+ * on completion, so a dropped request is retried rather than waited out.
+ */
+const POLL_FETCH_TIMEOUT_MS = 15_000
 
 export type RunArgs = {
   canvasBlob: Blob
@@ -35,7 +40,18 @@ export type RunArgs = {
 
 export type RunResult = { blob: Blob; promptId: string; seed: number }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true },
+    )
+  })
 
 /**
  * Run one transformation.
@@ -52,6 +68,10 @@ export async function runWorkflow(
 ): Promise<RunResult> {
   const timeoutMs = args.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS
   const clientId = crypto.randomUUID()
+  // Every fetch of the run carries this, so a connection that never answers ends
+  // at the deadline instead of hanging the run forever.
+  const deadline = AbortSignal.timeout(timeoutMs)
+  const signal = args.signal ? AbortSignal.any([args.signal, deadline]) : deadline
 
   let state: RunState = { ...initialRunState(), phase: 'uploading' }
   const push = (next: RunState) => {
@@ -79,7 +99,7 @@ export async function runWorkflow(
 
   try {
     const filename = `comfy-edit-${Date.now()}-${clientId.slice(0, 8)}.png`
-    const uploaded = await uploadImage(args.canvasBlob, filename)
+    const uploaded = await uploadImage(args.canvasBlob, filename, signal)
 
     const graph = patchWorkflow(args.graph, args.meta, {
       imageFilename: uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name,
@@ -89,7 +109,7 @@ export async function runWorkflow(
     })
 
     push({ ...state, phase: 'queued' })
-    const { prompt_id: promptId } = await queuePrompt(graph, clientId)
+    const { prompt_id: promptId } = await queuePrompt(graph, clientId, signal)
     push({ ...state, phase: 'running', promptId })
 
     if (socket) {
@@ -105,14 +125,15 @@ export async function runWorkflow(
       }
     }
 
-    const image = await pollUntilDone(promptId, timeoutMs, args.signal, () => state, push)
-    const blob = await fetchImageBlob(image)
+    const image = await pollUntilDone(promptId, signal, () => state, push)
+    const blob = await fetchImageBlob(image, signal)
 
     push({ ...state, phase: 'done', progress: 100, images: [image] })
     return { blob, promptId, seed: args.seed }
   } catch (e) {
-    const message =
-      e instanceof ComfyApiError || e instanceof Error
+    const message = deadline.aborted
+      ? `The transformation timed out after ${Math.round(timeoutMs / 1000)}s.`
+      : e instanceof ComfyApiError || e instanceof Error
         ? e.message
         : 'The transformation failed for an unknown reason.'
     push({ ...state, phase: 'error', error: message })
@@ -122,20 +143,19 @@ export async function runWorkflow(
   }
 }
 
-/** Poll /history until the run reaches a terminal state or the deadline passes. */
+/** Poll /history until the run reaches a terminal state or `signal` fires. */
 async function pollUntilDone(
   promptId: string,
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal,
   read: () => RunState,
   push: (s: RunState) => void,
 ): Promise<OutputImageRef> {
-  const deadline = Date.now() + timeoutMs
-
   for (;;) {
-    if (signal?.aborted) throw new Error('The transformation was cancelled.')
+    signal.throwIfAborted()
 
-    const json = await getHistory(promptId).catch(() => null)
+    const poll = AbortSignal.any([signal, AbortSignal.timeout(POLL_FETCH_TIMEOUT_MS)])
+    const json = await getHistory(promptId, poll).catch(() => null)
+    signal.throwIfAborted()
     if (json) {
       const next = applyHistory(read(), json, promptId)
       if (isTerminal(next)) {
@@ -155,11 +175,6 @@ async function pollUntilDone(
     const current = read()
     if (current.phase === 'error') throw new ComfyApiError(current.error ?? 'The workflow failed.')
 
-    if (Date.now() >= deadline) {
-      push({ ...current, phase: 'error', error: `The transformation timed out after ${Math.round(timeoutMs / 1000)}s.` })
-      throw new ComfyApiError(`The transformation timed out after ${Math.round(timeoutMs / 1000)}s.`)
-    }
-
-    await sleep(POLL_INTERVAL_MS)
+    await sleep(POLL_INTERVAL_MS, signal)
   }
 }
