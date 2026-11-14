@@ -1,6 +1,6 @@
 # comfy-edit — architecture
 
-Last checked against: `55b34ac` on 2026-11-09
+Last checked against: `7f12463` on 2026-11-13
 
 ## Purpose and boundaries
 
@@ -34,11 +34,12 @@ flowchart LR
 | Core | `src/core/` | Pure functions: shapes, undo/redo, history, workflow patching, the ComfyUI protocol as a reducer |
 | ComfyUI client | `src/comfy/client.ts` | Every `fetch`: `/comfy/*` (upload, prompt, history, view, interrupt), `/local/*`, `/workflows/*` |
 | Run orchestrator | `src/comfy/runner.ts` | One transformation: upload, patch, queue, poll `/history` to done, fetch result; deadline and cancel |
-| Local folder server | `src/server/localFolder.ts` | Vite plugin (dev and preview): `/local/dirs`, `/images`, `/thumb`, `/file`, `/save` |
-| Proxy | `vite.config.ts` | `/comfy` → `COMFY_URL` (default `http://127.0.0.1:8188`), strips prefix, `ws: true`, rewrites `Origin` |
+| Local folder server | `src/server/localFolder.ts` | Vite plugin (dev and preview): `/local/dirs`, `/images`, `/thumb`, `/file`, `/save`; its middleware runs the cross-site guard first, for `/comfy/*` as well as `/local/*`, ahead of Vite's proxy |
+| Cross-site guard | `src/server/requestGuard.ts` | `isCrossSite`: one pure function deciding from `Sec-Fetch-Site`, else `Origin` against `Host`; called by the local folder middleware (403) and the proxy's `bypass` hook (WebSocket upgrades, 404) |
+| Proxy | `vite.config.ts` | `/comfy` → `COMFY_URL` (default `http://127.0.0.1:8188`), strips prefix, `ws: true`, rewrites `Origin`; `bypass` refuses cross-site WebSocket upgrades |
 | Workflows | `public/workflows/` | `public/workflows/manifest.json` + API-format graphs + optional `public/workflows/loras.json`; validated at startup |
 | Test ids | `src/testids.ts` | Shared by components and e2e specs, so a renamed selector is a compile error |
-| Fake ComfyUI | `tests/fake-comfy/server.mjs` | Contract double: real queue, scriptable stall, `/interrupt`, `/__test/*` control; rejects foreign `Origin` |
+| Fake ComfyUI | `tests/fake-comfy/server.mjs` | Contract double: real queue, scriptable stall, `/interrupt`, `/__test/*` control (`/__test/seen` logs every request that arrived); rejects foreign `Origin` |
 
 ## Where state lives
 
@@ -59,7 +60,7 @@ No database, so no migrations.
 | You | Browser on the dev server (`npm run dev`; Vite binds loopback only unless `--host`) | Everything in the UI; browse any directory the server's user can read; save a PNG into any directory it can write | Overwrite a file (`wx`); write a non-PNG or into a subfolder; read a non-image via `/local/file` |
 | ComfyUI | Answers the proxy | Return any image or error, which the app displays | Reach the browser except through `/comfy/*`; the result's filename only ever goes back to ComfyUI's own `/view`, never to local disk |
 | Another process on this machine | `127.0.0.1:<port>` with no auth | All of the above: list directories, read images, save PNGs | Same limits as you |
-| A website you visit | Your browser, cross-origin | Probed with curl: a cross-origin text/plain POST to `/local/save` was accepted and wrote a file; Vite answers preflights without `Access-Control-Allow-Origin`, so it can't read responses | Pass Vite's Host check (a foreign `Host` gets 403), so DNS rebinding is blocked |
+| A website you visit | Your browser, cross-origin | Reach everything outside `/comfy/*` and `/local/*` (the app's own static files and Vite's dev endpoints), without reading the responses: Vite answers preflights without `Access-Control-Allow-Origin` | Use `/comfy/*` or `/local/*`: `isCrossSite` (`src/server/requestGuard.ts`) refuses `Sec-Fetch-Site: cross-site`/`same-site`, and without that header a non-GET or a WebSocket handshake with a foreign `Origin`; HTTP gets 403 before the proxy or any route runs, a WebSocket upgrade gets 404 from the proxy's `bypass`. Pass Vite's Host check (a foreign `Host` gets 403), so DNS rebinding is blocked. Not refused: a plain GET from a browser too old to send `Sec-Fetch-Site` (it sends no `Origin` on one either) |
 
 No secrets: there are no tokens or keys; `COMFY_URL` comes from the environment or a local .env file (see `.env.example`).
 
@@ -84,7 +85,7 @@ No secrets: there are no tokens or keys; `COMFY_URL` comes from the environment 
 | I15 | `/local/file` and `/local/thumb` serve only images inside the chosen folder | `tests/unit/localFolder.test.ts`: "refuses to escape the root via %s" (5 cases); `tests/e2e/local-folder.spec.ts`: "refuses to escape the chosen folder", "refuses a non-image inside the folder" |
 | I16 | `/local/save` writes only a PNG directly inside the chosen absolute folder, never overwriting | `tests/unit/localFolder.test.ts`: "refuses %s" (6 cases, under resolveSaveTarget); `tests/e2e/save.spec.ts`: "refuses to write outside the chosen folder", "refuses to overwrite, and says which name is taken" |
 | I17 | Symlinks are neither listed nor served | **unenforced:** `listImages` skips them and `/local/file` uses `lstat`, but no test makes a symlink |
-| I18 | Only this app's own pages can trigger `/local/save` | **unenforced:** no Origin/CSRF check exists; a curl probe of a cross-origin POST succeeded (see Trust boundaries) |
+| I18 | A request from another website never reaches a `/local/*` route or ComfyUI through `/comfy/*` (HTTP or WebSocket); the check runs before the proxy rewrites `Origin` | `tests/e2e/cross-site.spec.ts`: "a cross-site POST to /comfy/prompt (Sec-Fetch-Site: cross-site) gets 403 and never reaches ComfyUI", "a cross-site POST to /comfy/prompt (a foreign Origin and no Sec-Fetch-Site) gets 403 and never reaches ComfyUI", "a cross-site POST to /local/save (Sec-Fetch-Site: cross-site) gets 403 and writes no file", "a cross-site POST to /local/save (a foreign Origin and no Sec-Fetch-Site) gets 403 and writes no file", "a cross-site WebSocket to /comfy/ws is refused and ComfyUI sees no upgrade"; the decision table in `tests/unit/requestGuard.test.ts` (dev server only: see Unverified for preview) |
 
 ## Decisions
 
@@ -95,6 +96,7 @@ No secrets: there are no tokens or keys; `COMFY_URL` comes from the environment 
 - 2026-08-21/22 · Added a local-folder server (`src/server/localFolder.ts`, `sharp` thumbnails, save) · open and save images ComfyUI never saw · commits `8814bfe`, `09fc354`. **Drift:** `specs/001-comfy-edit/plan.md` still says "no application backend" and "nine packages"
 - 2026-08-21/22 · Folder choices kept in `localStorage` · reopen where you were · commits `8814bfe`, `09fc354`. **Drift:** `specs/001-comfy-edit/plan.md`, `specs/001-comfy-edit/research.md` D3 and `README.md` say nothing is persisted; still true of images and history
 - 2026-11-07 · R9: a run belongs to its image, lock at the click, deadline on every fetch, Cancel sends `/interrupt`, warn over unsaved results · commits `8684eb1`..`55b34ac`. **Drift:** `/interrupt` is not in `specs/001-comfy-edit/contracts/comfyui-api.md`
+- 2026-11-13 · R17: refuse cross-site requests on `/comfy/*` and `/local/*` by `Sec-Fetch-Site`, else `Origin` against `Host`; the `Origin` rewrite stays, so the check sits ahead of it · any site could queue a workflow or save a file · commit `7f12463`
 - Drift, scope: `specs/001-comfy-edit/plan.md` lists seven core modules and four UI components; there are now 13 modules in `src/core/` and 8 components plus the `useEditor` hook in `src/ui/`
 
 ## How to verify a change
@@ -113,8 +115,10 @@ COMFY_LIVE=1 npm run test:e2e:live   # the one @live test; needs a real ComfyUI 
 
 ## Unverified
 
-- Whether a real browser would send the cross-origin POST in I18 (Chrome's local-network-access
-  protections may block it); only curl was used.
+- I18 with a real browser on another site: the tests and curl set `Sec-Fetch-Site`/`Origin` by hand;
+  no page on a foreign origin was driven. Chromium's own (same-origin) requests pass, per the rest of the suite.
+- I18 under `vite preview`: checked once by curl on 2026-11-13 (403 on `/comfy/prompt` and `/local/save`,
+  404 on the `/comfy/ws` upgrade, nothing reached the fake), but the test suite runs the dev server only.
 - Behaviour against a live ComfyUI (the `@live` test was not run: no GPU instance up).
 - `vite preview` / `npm start` serving the same routes as dev (read in code, not run).
 - That I3's test flake is only the race above: every failure was at its first assertion (canvas missing, or
