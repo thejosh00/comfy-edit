@@ -50,6 +50,8 @@ let pending = null
 let waiting = []
 /** @type {Array<{promptId: string | null}>} every POST /interrupt, in order */
 const interrupts = []
+/** @type {string[]} every request and upgrade that arrived, except /__test/*, as "METHOD /path" */
+const seen = []
 /** @type {Set<import('node:http').ServerResponse>} requests held open by config.stall */
 const stalled = new Set()
 
@@ -208,6 +210,7 @@ const server = createServer(async (req, res) => {
   const path = url.pathname
   // Logged so a proxy rewrite mismatch (/comfy/ws vs /ws) is diagnosable in one run.
   process.stderr.write(`[fake-comfy] ${req.method} ${path}\n`)
+  if (!path.startsWith('/__test/')) seen.push(`${req.method} ${path}`)
 
   // ComfyUI 0.31+ answers 403 to any request carrying a foreign Origin — every
   // route, not just writes. Enforced here so a proxy that forwards the browser's
@@ -235,6 +238,7 @@ const server = createServer(async (req, res) => {
     pending = null
     waiting = []
     interrupts.length = 0
+    seen.length = 0
     for (const held of stalled) held.destroy()
     promptCounter = 0
     sentSinceQueue = 0
@@ -254,6 +258,10 @@ const server = createServer(async (req, res) => {
 
   if (path === '/__test/queued') {
     return json(res, 200, { queued })
+  }
+
+  if (path === '/__test/seen') {
+    return json(res, 200, { seen })
   }
 
   if (path === '/__test/interrupts') {
@@ -388,6 +396,7 @@ const wss = new WebSocketServer({ noServer: true })
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url, `http://127.0.0.1:${PORT}`)
   process.stderr.write(`[fake-comfy] UPGRADE ${pathname} origin=${req.headers.origin ?? '-'}\n`)
+  seen.push(`UPGRADE ${pathname}`)
   // If this ever logs /comfy/ws, the Vite proxy rewrite is not applying to upgrades.
   if (pathname !== '/ws' || !originAllowed(req)) {
     socket.destroy()

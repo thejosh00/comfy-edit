@@ -2,6 +2,7 @@
 import { defineConfig, loadEnv, type ProxyOptions } from 'vite'
 import react from '@vitejs/plugin-react'
 import { localFolderPlugin } from './src/server/localFolder'
+import { isCrossSite } from './src/server/requestGuard'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -16,6 +17,10 @@ export default defineConfig(({ mode }) => {
       changeOrigin: true,
       ws: true,
       rewrite: (path: string) => path.replace(/^\/comfy/, ''),
+      // WebSocket upgrades never pass through middleware, so localFolderPlugin's
+      // cross-site check cannot see them. Vite calls `bypass` with no `res` for an
+      // upgrade; returning false makes it answer 404 and close without proxying.
+      bypass: (req, res) => (!res && isCrossSite(req) ? false : undefined),
       configure: (proxyServer) => {
         // ComfyUI (0.31+) rejects any request whose Origin header does not match
         // its own host — 403 on every route, not just writes. `changeOrigin`

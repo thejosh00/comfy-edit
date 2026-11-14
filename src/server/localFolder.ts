@@ -23,6 +23,7 @@ import {
   type DirListing,
   type LocalImage,
 } from '../core/localImages'
+import { CROSS_SITE_MESSAGE, isCrossSite } from './requestGuard'
 
 /** Enough for a working folder; a picker showing thousands is not usable anyway. */
 const DEFAULT_LIMIT = 500
@@ -313,6 +314,15 @@ function readBody(req: import('node:http').IncomingMessage): Promise<Buffer | nu
 export function localFolderPlugin(): Plugin {
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
+
+    // First, before any route below and before Vite's proxy (which is mounted
+    // after this plugin's middleware): refuse requests made by other websites.
+    if (/^\/(comfy|local)(\/|$)/.test(url.pathname) && isCrossSite(req)) {
+      res.statusCode = 403
+      res.setHeader('Content-Type', 'text/plain')
+      res.end(CROSS_SITE_MESSAGE)
+      return
+    }
 
     if (url.pathname === `${LOCAL_BASE}/dirs`) {
       const path = url.searchParams.get('path') || defaultBrowsePath()
